@@ -1,0 +1,7 @@
+{
+    "graphs": {
+    "app": "./src/graph.ts:default" 
+    },
+    "env": ".env"
+}
+  
