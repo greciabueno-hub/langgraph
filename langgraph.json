@@ -1,6 +1,6 @@
 {
     "graphs": {
-    "app": "./src/graph.ts:default" 
+    "app": "./dist/graph.js:default" 
     },
     "env": ".env"
 }
