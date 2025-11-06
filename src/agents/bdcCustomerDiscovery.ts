@@ -1,5 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { SystemMessage } from "@langchain/core/messages";
+import { SystemMessage, HumanMessage, AIMessage } from "@langchain/core/messages";
 import { MessagesAnnotation } from "@langchain/langgraph";
 
 export type ConversationState = typeof MessagesAnnotation.State;
@@ -201,7 +201,7 @@ INFORMATION ALREADY COLLECTED:
   const completion = await model.invoke([
     new SystemMessage(systemPrompt),
     // Provide the dynamic "user prompt" as a single user message
-    { _getType: () => "human", get type() { return "human" as const; }, content: userBlock } as any,
+    new HumanMessage(userBlock),
     ...state.messages,
   ]);
 
@@ -218,7 +218,7 @@ INFORMATION ALREADY COLLECTED:
 
   // Return exactly one assistant message
   // The runtime will append this to state.messages via the reducer
-  return { messages: [{ _getType: () => "ai", get type() { return "ai" as const; }, content: text } as any] };
+  return { messages: [new AIMessage(text)] };
 }
 
 export default bdcCustomerDiscovery;
