@@ -1,7 +1,7 @@
 // simulate.ts
 import { createCustomerSimulator } from "./customerSimulator.js";
 import { createAutomotiveApiNode } from "./automotiveApiNode.js";
-import { pickLatestAssistant, pickLatestAssistantFromConversations, fetchConversation, normalizeConversationHistory } from "./conversationApi.js";
+import { fetchConversation, normalizeConversationHistory } from "./conversationApi.js";
 
 import "dotenv/config";
 
