@@ -1,7 +1,7 @@
 // simulate.ts
 import { createCustomerSimulator } from "./customerSimulator.js";
 import { createAutomotiveApiNode } from "./automotiveApiNode.js";
-import { pickLatestAssistant, pickLatestAssistantFromConversations, fetchConversation } from "./conversationApi.js";
+import { pickLatestAssistant, pickLatestAssistantFromConversations, fetchConversation, normalizeConversationHistory } from "./conversationApi.js";
 
 import "dotenv/config";
 
@@ -22,7 +22,7 @@ async function main() {
   const dealershipId = process.env.DEALERSHIP_ID || "4675";
   const fromNumber = process.env.FROM || "+15551234567";
   const backendFirst = process.env.BACKEND_FIRST === "true"; // if true, backend speaks first
-  const maxTurns = Number(process.env.MAX_TURNS || 2);
+  const maxTurns = Number(process.env.MAX_TURNS || 15);
 
   const history: string[] = [];
   let agentReply = "Hello! How can I help you today?"; // only used if backendFirst=false
@@ -31,11 +31,9 @@ async function main() {
   // If backend initiates, fetch first agent reply before customer speaks (via GET)
   if (backendFirst) {
     const convo = await fetchConversation(baseUrl, customerId, dealershipId);
-    const firstReply = pickLatestAssistantFromConversations(convo);
-    if (firstReply) {
-      agentReply = firstReply;
-      history.push(`AGENT: ${agentReply}`);
-    }
+    const { history: mapped, lastAssistant } = normalizeConversationHistory(convo);
+    if (mapped.length) history.splice(0, history.length, ...mapped);
+    if (lastAssistant) agentReply = lastAssistant;
   }
 
   while (turns < maxTurns) {
@@ -57,10 +55,10 @@ async function main() {
       metadata: { dealershipId, from: fromNumber, sendRealResponses: true },
     });
 
-    const reply = pickLatestAssistant(result) || "";
-    const cleanedReply = reply.replace(/^\s*(?:agent|assistant)\s*:\s*/i, "");
-    history.push(`AGENT: ${cleanedReply}`);
-    agentReply = cleanedReply;
+    const convo = await fetchConversation(baseUrl, customerId, dealershipId);
+    const { history: mapped2, lastAssistant: latestAssistant } = normalizeConversationHistory(convo);
+    if (mapped2.length) history.splice(0, history.length, ...mapped2);
+    if (latestAssistant) agentReply = latestAssistant;
 
     if (
       result &&
