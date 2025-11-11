@@ -80,13 +80,13 @@ async function syncFromBackend(state: ConversationState) {
 
   const newMessages: (AIMessage | HumanMessage)[] = [];
   for (const line of mapped) {
-    if (!existingLines.has(line)) {
-      if (line.startsWith("AGENT: ")) {
-        newMessages.push(new AIMessage(line.replace(/^AGENT:\s*/i, "")));
-      } else if (line.startsWith("CUSTOMER: ")) {
-        newMessages.push(new HumanMessage(line.replace(/^CUSTOMER:\s*/i, "")));
+    for (const line of mapped) {
+        if (line.startsWith("AGENT: ")) {
+          newMessages.push(new AIMessage(line.replace(/^AGENT:\s*/i, "")));
+        } else if (line.startsWith("CUSTOMER: ")) {
+          newMessages.push(new HumanMessage(line.replace(/^CUSTOMER:\s*/i, "")));
+        }
       }
-    }
   }
   if (newMessages.length === 0) return { messages: [] as BaseMessage[] };
   return { messages: newMessages };
@@ -162,23 +162,23 @@ async function salesperson(state: ConversationState) {
     raw.push(...((result as any).messages as any[]));
   }
   // 2) updatedState.messages (full conversation snapshot in the response)
-  if (Array.isArray((result as any)?.updatedState?.messages)) {
-    raw.push(...((result as any).updatedState.messages as any[]));
-  }
-  // 3) updatedState.sessionData.recommendationMessages (texts only)
-  const recs = (result as any)?.updatedState?.sessionData?.recommendationMessages;
-  if (Array.isArray(recs)) {
-    for (const r of recs) {
-      if (r && typeof r.text === "string" && r.text.length > 0) {
-        raw.push({
-          role: "ASSISTANT",
-          type: "vehicle_recommendation",
-          content: r.text,
-          timestamp: (r as any)?.timestamp ?? undefined,
-        });
-      }
-    }
-  }
+//   if (Array.isArray((result as any)?.updatedState?.messages)) {
+//     raw.push(...((result as any).updatedState.messages as any[]));
+//   }
+//   // 3) updatedState.sessionData.recommendationMessages (texts only)
+//   const recs = (result as any)?.updatedState?.sessionData?.recommendationMessages;
+//   if (Array.isArray(recs)) {
+//     for (const r of recs) {
+//       if (r && typeof r.text === "string" && r.text.length > 0) {
+//         raw.push({
+//           role: "ASSISTANT",
+//           type: "vehicle_recommendation",
+//           content: r.text,
+//           timestamp: (r as any)?.timestamp ?? undefined,
+//         });
+//       }
+//     }
+//   }
   // Sort by timestamp if present to preserve server ordering
   raw.sort((a, b) => {
     const ta = typeof a?.timestamp === "string" ? Date.parse(a.timestamp) : 0;
@@ -195,10 +195,7 @@ async function salesperson(state: ConversationState) {
       role === "ASSISTANT" ||
       (typeof type === "string" && assistantTypes.has(type));
     if (!isAssistant || !contentStr) continue;
-    const labeled = "AGENT: " + contentStr;
-    if (existingLines.has(labeled)) continue; // skip duplicates
     immediateAi.push(new AIMessage(contentStr));
-    existingLines.add(labeled);
   }
   // Fallback: if nothing was parsed, still return the latest assistant string if present
   if (immediateAi.length === 0) {
