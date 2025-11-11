@@ -38,8 +38,25 @@ async function syncFromBackend(state: ConversationState) {
       return await fetchConversation(input.baseUrl, input.customerId, input.dealershipId);
     },
   });
-  const convo = await fetchConvo.invoke({ baseUrl, customerId, dealershipId });
-  const { history: mapped } = normalizeConversationHistory(convo);
+  const payload = await fetchConvo.invoke({ baseUrl, customerId, dealershipId });
+  const list = Array.isArray(payload) ? payload : [payload];
+  const desiredConversationId = process.env.CONVERSATION_ID;
+  const conv =
+    typeof desiredConversationId === "string" && desiredConversationId.length > 0
+      ? (list.find((c) => c && typeof c === "object" && c.id === desiredConversationId) ?? list[0])
+      : list[0];
+  const discoveryHist = conv?.contextData?.discoveryContext?.conversationHistory ?? [];
+  const appointmentHist = conv?.contextData?.appointmentContext?.conversationHistory ?? [];
+  const historiesEmpty = discoveryHist.length === 0 && appointmentHist.length === 0;
+  const firstSync = state.messages.length === 0;
+  let mapped: string[];
+  if (firstSync && historiesEmpty && Array.isArray(conv?.messages) && conv.messages.length > 0) {
+    const first = (conv.messages as any[])[0];
+    const content = String(first?.content ?? "");
+    mapped = content ? ["AGENT: " + content] : [];
+  } else {
+    mapped = normalizeConversationHistory(conv).history;
+  }
   // Optional visibility in console while developing
   console.log("[syncFromBackend] fetchedLines:", mapped.length, "customerId:", customerId, "dealer:", dealershipId);
   if (process.env.DEBUG_CONVERSATION === "true") {
