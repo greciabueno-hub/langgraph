@@ -2,14 +2,13 @@ import { StateGraph, MessagesAnnotation, START, END } from "@langchain/langgraph
 import { AIMessage, HumanMessage, BaseMessage } from "@langchain/core/messages";
 import { RunnableLambda } from "@langchain/core/runnables";
 import { createAutomotiveApiNode } from "./agents/automotiveApiNode.js";
-import { fetchConversation, normalizeConversationHistory } from "./agents/conversationApi.js";
+import { fetchConversation } from "./agents/conversationApi.js";
 import { createCustomerSimulator } from "./agents/customerSimulator.js";
-import "dotenv/config";
 import "dotenv/config";
 
 type ConversationState = typeof MessagesAnnotation.State;
 
-const MAX_AGENT_TURNS = Number(process.env.MAX_TURNS || 10);
+const MAX_AGENT_TURNS = Number(process.env.MAX_TURNS || 20);
 
 function countAiMessages(messages: BaseMessage[]) {
   return messages.filter((m) => m.type === "ai").length;
@@ -32,6 +31,14 @@ async function syncFromBackend(state: ConversationState) {
   const customerId = process.env.CUSTOMER_ID || "demo-customer";
   const dealershipId = process.env.DEALERSHIP_ID || "4675";
 
+  // Only fetch from backend on the very first sync; afterwards we rely on POST responses.
+  if (state.messages.length > 0) {
+    if (process.env.DEBUG_CONVERSATION === "true") {
+      console.log("[syncFromBackend] skipping GET after first sync (messages already present)");
+    }
+    return { messages: [] as BaseMessage[] };
+  }
+
   // Wrap fetch in a Runnable so LangSmith traces this step
   const fetchConvo = new RunnableLambda({
     func: async (input: { baseUrl: string; customerId: string; dealershipId?: string }) => {
@@ -45,17 +52,14 @@ async function syncFromBackend(state: ConversationState) {
     typeof desiredConversationId === "string" && desiredConversationId.length > 0
       ? (list.find((c) => c && typeof c === "object" && c.id === desiredConversationId) ?? list[0])
       : list[0];
-  const discoveryHist = conv?.contextData?.discoveryContext?.conversationHistory ?? [];
-  const appointmentHist = conv?.contextData?.appointmentContext?.conversationHistory ?? [];
-  const historiesEmpty = discoveryHist.length === 0 && appointmentHist.length === 0;
-  const firstSync = state.messages.length === 0;
-  let mapped: string[];
-  if (firstSync && historiesEmpty && Array.isArray(conv?.messages) && conv.messages.length > 0) {
+  // Only take the very first greeting message from the conversation for initial context
+  let mapped: string[] = [];
+  if (Array.isArray(conv?.messages) && conv.messages.length > 0) {
     const first = (conv.messages as any[])[0];
-    const content = String(first?.content ?? "");
-    mapped = content ? ["AGENT: " + content] : [];
-  } else {
-    mapped = normalizeConversationHistory(conv).history;
+    const content = typeof first?.content === "string" ? first.content : "";
+    if (content.length > 0) {
+      mapped = ["AGENT: " + content];
+    }
   }
   // Optional visibility in console while developing
   console.log("[syncFromBackend] fetchedLines:", mapped.length, "customerId:", customerId, "dealer:", dealershipId);
@@ -135,8 +139,76 @@ async function salesperson(state: ConversationState) {
     metadata: { dealershipId, from: fromNumber, sendRealResponses: true },
   });
 
-  const reply = extractLatestAssistant(result) || "";
-  return { messages: [new AIMessage(reply)] };
+  // Immediately enrich context from POST response so the next customer turn can see it,
+  // without waiting for the backend projection to conversationHistory.
+  const existingLines = new Set(
+    state.messages.map((m) => {
+      const text = typeof m.content === "string" ? m.content : "";
+      return (m.type === "ai" ? "AGENT: " : m.type === "human" ? "CUSTOMER: " : "") + text;
+    })
+  );
+  const raw: any[] = [];
+  // 0) Single assistant reply as per API schema
+  if (typeof (result as any)?.response === "string" && (result as any).response.length > 0) {
+    raw.push({
+      role: "ASSISTANT",
+      type: "assistant_response",
+      content: (result as any).response,
+      timestamp: (result as any)?.timestamp ?? undefined,
+    });
+  }
+  // 1) Primary messages array from POST
+  if (Array.isArray((result as any)?.messages)) {
+    raw.push(...((result as any).messages as any[]));
+  }
+  // 2) updatedState.messages (full conversation snapshot in the response)
+  if (Array.isArray((result as any)?.updatedState?.messages)) {
+    raw.push(...((result as any).updatedState.messages as any[]));
+  }
+  // 3) updatedState.sessionData.recommendationMessages (texts only)
+  const recs = (result as any)?.updatedState?.sessionData?.recommendationMessages;
+  if (Array.isArray(recs)) {
+    for (const r of recs) {
+      if (r && typeof r.text === "string" && r.text.length > 0) {
+        raw.push({
+          role: "ASSISTANT",
+          type: "vehicle_recommendation",
+          content: r.text,
+          timestamp: (r as any)?.timestamp ?? undefined,
+        });
+      }
+    }
+  }
+  // Sort by timestamp if present to preserve server ordering
+  raw.sort((a, b) => {
+    const ta = typeof a?.timestamp === "string" ? Date.parse(a.timestamp) : 0;
+    const tb = typeof b?.timestamp === "string" ? Date.parse(b.timestamp) : 0;
+    return ta - tb;
+  });
+  const assistantTypes = new Set(["assistant_response", "vehicle_recommendation", "workflow_response"]);
+  const immediateAi: AIMessage[] = [];
+  for (const m of raw) {
+    const role = typeof m?.role === "string" ? m.role.toUpperCase() : undefined;
+    const type = typeof m?.type === "string" ? m.type.toLowerCase() : undefined;
+    const contentStr = typeof m?.content === "string" ? m.content : "";
+    const isAssistant =
+      role === "ASSISTANT" ||
+      (typeof type === "string" && assistantTypes.has(type));
+    if (!isAssistant || !contentStr) continue;
+    const labeled = "AGENT: " + contentStr;
+    if (existingLines.has(labeled)) continue; // skip duplicates
+    immediateAi.push(new AIMessage(contentStr));
+    existingLines.add(labeled);
+  }
+  // Fallback: if nothing was parsed, still return the latest assistant string if present
+  if (immediateAi.length === 0) {
+    const reply =
+      (typeof (result as any)?.response === "string" ? (result as any).response : "") ||
+      extractLatestAssistant(result) ||
+      "";
+    return { messages: [new AIMessage(reply)] };
+  }
+  return { messages: immediateAi };
 }
 
 const app = new StateGraph(MessagesAnnotation)
@@ -152,8 +224,8 @@ const app = new StateGraph(MessagesAnnotation)
   )
   .addConditionalEdges(
     "salesperson",
-    (state) => (countAiMessages(state.messages) >= MAX_AGENT_TURNS ? END : "sync"),
-    ["sync", END]
+    (state) => (countAiMessages(state.messages) >= MAX_AGENT_TURNS ? END : "customer"),
+    ["customer", END]
   )
   .compile();
 
