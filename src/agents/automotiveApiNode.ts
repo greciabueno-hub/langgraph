@@ -28,9 +28,19 @@ export type AutomotiveApiResponse = {
 export function createAutomotiveApiNode(baseUrl: string): Runnable<Request, AutomotiveApiResponse> {
   return new RunnableLambda({
     func: async (req: Request) => {
-    const { data } = await axios.post(`${baseUrl}/workflows/process`, req, {
+    const url = `${baseUrl}/workflows/process`;
+    if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
+      // Safe, structured log of outbound request
+      console.log("[automotiveApi] POST", url);
+      console.dir(req, { depth: null });
+    }
+    const { data } = await axios.post(url, req, {
       timeout: 30000,
     });
+    if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
+      console.log("[automotiveApi] RESPONSE");
+      console.dir(data, { depth: null });
+    }
       return data as AutomotiveApiResponse; // { success, messages, updatedState, workflowType, nextAction, completed, ... }
     },
   });

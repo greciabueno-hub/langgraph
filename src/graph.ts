@@ -42,6 +42,12 @@ async function syncFromBackend(state: ConversationState) {
   const { history: mapped } = normalizeConversationHistory(convo);
   // Optional visibility in console while developing
   console.log("[syncFromBackend] fetchedLines:", mapped.length, "customerId:", customerId, "dealer:", dealershipId);
+  if (process.env.DEBUG_CONVERSATION === "true") {
+    console.log("[syncFromBackend] lines:");
+    for (const line of mapped) {
+      console.log("  -", line);
+    }
+  }
 
   // Build a quick set of existing lines to avoid duplicates
   const existingLines = new Set(
