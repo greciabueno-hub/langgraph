@@ -10,6 +10,15 @@ export async function fetchConversation(baseUrl: string, customerId: string, dea
   return data; // expect { updatedState, messages, ... }
 }
 
+export function selectConversation(convoPayload: any, desiredConversationId?: string) {
+  const list = Array.isArray(convoPayload) ? convoPayload : [convoPayload];
+  if (typeof desiredConversationId === "string" && desiredConversationId.length > 0) {
+    const match = list.find((c) => c && typeof c === "object" && c.id === desiredConversationId);
+    if (match) return match;
+  }
+  return list[0];
+}
+
 
 // For POST responses or single-conversation GETs where payload has a top-level messages array.
 // export function pickLatestAssistant(payload: any): string {
