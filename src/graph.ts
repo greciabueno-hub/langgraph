@@ -161,24 +161,7 @@ async function salesperson(state: ConversationState) {
   if (Array.isArray((result as any)?.messages)) {
     raw.push(...((result as any).messages as any[]));
   }
-  // 2) updatedState.messages (full conversation snapshot in the response)
-//   if (Array.isArray((result as any)?.updatedState?.messages)) {
-//     raw.push(...((result as any).updatedState.messages as any[]));
-//   }
-//   // 3) updatedState.sessionData.recommendationMessages (texts only)
-//   const recs = (result as any)?.updatedState?.sessionData?.recommendationMessages;
-//   if (Array.isArray(recs)) {
-//     for (const r of recs) {
-//       if (r && typeof r.text === "string" && r.text.length > 0) {
-//         raw.push({
-//           role: "ASSISTANT",
-//           type: "vehicle_recommendation",
-//           content: r.text,
-//           timestamp: (r as any)?.timestamp ?? undefined,
-//         });
-//       }
-//     }
-//   }
+
   // Sort by timestamp if present to preserve server ordering
   raw.sort((a, b) => {
     const ta = typeof a?.timestamp === "string" ? Date.parse(a.timestamp) : 0;
@@ -207,6 +190,8 @@ async function salesperson(state: ConversationState) {
   }
   return { messages: immediateAi };
 }
+
+
 
 const app = new StateGraph(MessagesAnnotation)
   .addNode("sync", syncFromBackend)

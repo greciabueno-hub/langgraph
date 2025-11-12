@@ -18,19 +18,6 @@ export async function fetchConversation(baseUrl: string, customerId: string, dea
 }
 
 
-// For POST responses or single-conversation GETs where payload has a top-level messages array.
-// export function pickLatestAssistant(payload: any): string {
-//   const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
-//   if (msgs.length === 0) return "";
-//   // Prefer the most recent ASSISTANT
-//   for (let i = msgs.length - 1; i >= 0; i--) {
-//     const m = msgs[i];
-//     if (m?.role === "ASSISTANT" && typeof m.content === "string") return m.content;
-//   }
-//   const last = msgs[msgs.length - 1];
-//   return typeof last?.content === "string" ? last.content : "";
-// }
-
 // conversationApi.ts (or inline in simulator.ts)
 export function normalizeConversationHistory(convoPayload: any): {
     history: string[];

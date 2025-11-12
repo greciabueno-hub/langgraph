@@ -1,0 +1,23 @@
+services:
+  studio:
+    build: .
+    container_name: multi-agent-studio
+    env_file:
+      - .env
+    environment:
+      - DEBUG_CONVERSATION=${DEBUG_CONVERSATION:-false}
+      - DEBUG_AUTOMOTIVE_API=${DEBUG_AUTOMOTIVE_API:-false}
+      - AUTOMOTIVE_API_BASE_URL=http://automotive-api:5000
+    ports:
+      - "2024:2024"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    command: ["npx","@langchain/langgraph-cli","dev","--host","0.0.0.0","--port","2024"]
+    networks:
+      - api_net        # just reference the network here (no external/name here)
+
+networks:
+  api_net:
+    external: true     # declare it here
+    name: api-monorepo_default

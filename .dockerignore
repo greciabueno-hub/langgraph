@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+pnpm-debug.log
+yarn-error.log
+dist/*.map
+.git
+.gitignore
+**/.DS_Store
+**/out
+**/*.log
+
+
