@@ -12,8 +12,7 @@ export function createCustomerSimulator(persona: string): Runnable<{ agentReply:
       new SystemMessage(
         `You are a car buyer. Persona: ${persona}.
          Stay on goal, be concise, realistic, and respond as a customer.
-         If the agent asks a question, answer briefly. Only accept appointments after 4pm.
-         Make the salesperson show you a list of cars before deciding on one`
+         If the agent asks a question, answer briefly.`
       ),
       new HumanMessage(`Conversation so far:
 ${history.join("\n")}

@@ -13,7 +13,7 @@ services:
     volumes:
       - ./:/app
       - /app/node_modules
-    command: ["npx","@langchain/langgraph-cli","dev","--host","0.0.0.0","--port","2024"]
+    command: ["npx","@langchain/langgraph-cli@latest","dev","--host","0.0.0.0","--port","2024"]
     networks:
       - api_net        # just reference the network here (no external/name here)
 

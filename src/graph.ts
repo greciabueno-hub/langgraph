@@ -4,14 +4,15 @@ import { RunnableLambda } from "@langchain/core/runnables";
 import { createAutomotiveApiNode } from "./agents/automotiveApiNode.js";
 import { fetchConversation } from "./agents/conversationApi.js";
 import { createCustomerSimulator } from "./agents/customerSimulator.js";
+import { createConversationJudge } from "./agents/judge.js";
 import "dotenv/config";
 
 type ConversationState = typeof MessagesAnnotation.State;
 
-const MAX_AGENT_TURNS = Number(process.env.MAX_TURNS || 20);
+const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 20);
 
-function countAiMessages(messages: BaseMessage[]) {
-  return messages.filter((m) => m.type === "ai").length;
+function countTotalMessages(messages: BaseMessage[]) {
+  return messages.length;
 }
 
 function extractLatestAssistant(payload: any): string {
@@ -191,24 +192,52 @@ async function salesperson(state: ConversationState) {
   return { messages: immediateAi };
 }
 
-
+// Judge node: evaluate the conversation at the end and optionally append a summary
+async function judge(state: ConversationState) {
+  const lines = state.messages.map((m) => {
+    const text = typeof m.content === "string" ? m.content : "";
+    const role = m.type === "ai" ? "EMPLOYEE" : m.type === "human" ? "CUSTOMER" : "OTHER";
+    return `${role}: ${text}`;
+  });
+  const evaluator = createConversationJudge();
+  const result = await evaluator.invoke({ transcript: lines });
+  const emitMsg = (process.env.JUDGE_EMIT_MESSAGE ?? "true").toLowerCase() === "true";
+  if (process.env.DEBUG_JUDGE === "true") {
+    console.log("[judge] result");
+    console.dir(result, { depth: null });
+  }
+  if (!emitMsg) {
+    return { messages: [] as BaseMessage[] };
+  }
+  const subscoresText = result.employee.subscores
+    .map((s) => `  • ${s.criterion}: ${s.score}/100`)
+    .join("\n");
+  const summary =
+    `Evaluation — Overall: ${result.overallScore}/100\n` +
+    `Employee: ${result.employee.score}/100 — ${result.employee.justification}\n\n` +
+    `Score Breakdown:\n${subscoresText}\n` +
+    (result.comments ? `\nNotes: ${result.comments}` : "");
+  return { messages: [new AIMessage(summary)] };
+}
 
 const app = new StateGraph(MessagesAnnotation)
   .addNode("sync", syncFromBackend)
   .addNode("customer", customer)
   .addNode("salesperson", salesperson)
+  .addNode("judge", judge)
   .addEdge(START, "sync")
   .addEdge("sync", "customer")
   .addConditionalEdges(
     "customer",
-    (state) => (countAiMessages(state.messages) >= MAX_AGENT_TURNS ? END : "salesperson"),
-    ["salesperson", END]
+    (state) => (countTotalMessages(state.messages) >= MAX_MESSAGES ? "judge" : "salesperson"),
+    ["salesperson", "judge"]
   )
   .addConditionalEdges(
     "salesperson",
-    (state) => (countAiMessages(state.messages) >= MAX_AGENT_TURNS ? END : "customer"),
-    ["customer", END]
+    (state) => (countTotalMessages(state.messages) >= MAX_MESSAGES ? "judge" : "customer"),
+    ["customer", "judge"]
   )
+  .addEdge("judge", END)
   .compile();
 
 export default app;
