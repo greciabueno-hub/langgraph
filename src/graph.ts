@@ -1,4 +1,4 @@
-import { StateGraph, MessagesAnnotation, START, END } from "@langchain/langgraph";
+import { StateGraph, MessagesAnnotation, START, END, Annotation } from "@langchain/langgraph";
 import { AIMessage, HumanMessage, BaseMessage } from "@langchain/core/messages";
 import { RunnableLambda } from "@langchain/core/runnables";
 import { createAutomotiveApiNode } from "./agents/automotiveApiNode.js";
@@ -7,9 +7,18 @@ import { createCustomerSimulator } from "./agents/customerSimulator.js";
 import { createConversationJudge } from "./agents/judge.js";
 import "dotenv/config";
 
-type ConversationState = typeof MessagesAnnotation.State;
+// Extend MessagesAnnotation to include appointmentCompleted flag
+const ConversationAnnotation = Annotation.Root({
+  messages: MessagesAnnotation.spec.messages,
+  appointmentCompleted: Annotation<boolean>({
+    reducer: (x, y) => y ?? x,
+    default: () => false,
+  }),
+});
 
-const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 20);
+type ConversationState = typeof ConversationAnnotation.State;
+
+const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 100);
 
 function countTotalMessages(messages: BaseMessage[]) {
   return messages.length;
@@ -140,6 +149,31 @@ async function salesperson(state: ConversationState) {
     metadata: { dealershipId, from: fromNumber, sendRealResponses: true },
   });
 
+  // Debug: Log full response payload to see appointment confirmation signals
+  console.log("[salesperson] Full API Response Payload:", JSON.stringify(result, null, 2));
+  console.log("[salesperson] Response Fields:", {
+    success: (result as any)?.success,
+    workflowType: (result as any)?.workflowType,
+    completed: (result as any)?.completed,
+    nextAction: (result as any)?.nextAction,
+    updatedState: (result as any)?.updatedState,
+    response: (result as any)?.response,
+    messages: Array.isArray((result as any)?.messages) ? (result as any).messages.length : "not an array",
+  });
+
+  // Check if workflowStep in updatedState is "COMPLETED" - this indicates the conversation should end
+  const stateUpdate = (result as any)?.updatedState;
+  const workflowStep = stateUpdate && typeof stateUpdate.workflowStep === "string" 
+    ? stateUpdate.workflowStep 
+    : "";
+  const appointmentCompleted = workflowStep === "COMPLETED";
+  
+  if (appointmentCompleted) {
+    console.log("[salesperson] workflowStep is 'COMPLETED' - conversation should end.");
+  } else if (workflowStep) {
+    console.log("[salesperson] workflowStep:", workflowStep, "- continuing conversation.");
+  }
+
   // Immediately enrich context from POST response so the next customer turn can see it,
   // without waiting for the backend projection to conversationHistory.
   const existingLines = new Set(
@@ -187,9 +221,15 @@ async function salesperson(state: ConversationState) {
       (typeof (result as any)?.response === "string" ? (result as any).response : "") ||
       extractLatestAssistant(result) ||
       "";
-    return { messages: [new AIMessage(reply)] };
+    return { 
+      messages: [new AIMessage(reply)],
+      appointmentCompleted: appointmentCompleted,
+    };
   }
-  return { messages: immediateAi };
+  return { 
+    messages: immediateAi,
+    appointmentCompleted: appointmentCompleted,
+  };
 }
 
 // Judge node: evaluate the conversation at the end and optionally append a summary
@@ -220,7 +260,7 @@ async function judge(state: ConversationState) {
   return { messages: [new AIMessage(summary)] };
 }
 
-const app = new StateGraph(MessagesAnnotation)
+const app = new StateGraph(ConversationAnnotation)
   .addNode("sync", syncFromBackend)
   .addNode("customer", customer)
   .addNode("salesperson", salesperson)
@@ -234,7 +274,19 @@ const app = new StateGraph(MessagesAnnotation)
   )
   .addConditionalEdges(
     "salesperson",
-    (state) => (countTotalMessages(state.messages) >= MAX_MESSAGES ? "judge" : "customer"),
+    (state) => {
+      // If appointment is completed, end conversation and go to judge
+      if (state.appointmentCompleted === true) {
+        console.log("[graph] Appointment completed - routing to judge");
+        return "judge";
+      }
+      // If max messages reached, go to judge
+      if (countTotalMessages(state.messages) >= MAX_MESSAGES) {
+        return "judge";
+      }
+      // Otherwise continue conversation
+      return "customer";
+    },
     ["customer", "judge"]
   )
   .addEdge("judge", END)

@@ -37,11 +37,25 @@ export function createAutomotiveApiNode(baseUrl: string): Runnable<Request, Auto
     const { data } = await axios.post(url, req, {
       timeout: 30000,
     });
+    
+    // Always log the full response payload for debugging
     if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
       console.log("[automotiveApi] RESPONSE");
       console.dir(data, { depth: null });
     }
-      return data as AutomotiveApiResponse; // { success, messages, updatedState, workflowType, nextAction, completed, ... }
+    
+    // Log key fields that might indicate appointment confirmation
+    const response = data as AutomotiveApiResponse;
+    console.log("[automotiveApi] Response Summary:", {
+      success: response.success,
+      workflowType: response.workflowType,
+      completed: response.completed,
+      nextAction: response.nextAction,
+      messageCount: Array.isArray(response.messages) ? response.messages.length : 0,
+      hasResponse: typeof (response as any)?.response === "string",
+    });
+    
+    return response; // { success, messages, updatedState, workflowType, nextAction, completed, ... }
     },
   });
 }
