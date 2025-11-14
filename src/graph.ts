@@ -292,5 +292,33 @@ const app = new StateGraph(ConversationAnnotation)
   .addEdge("judge", END)
   .compile();
 
+// Wrap all methods to add recursion limit from environment variable
+const RECURSION_LIMIT = Number(process.env.RECURSION_LIMIT || 100);
+console.log(`[graph.ts] Setting recursion limit to: ${RECURSION_LIMIT} (from env: ${process.env.RECURSION_LIMIT || 'not set, using default 100'})`);
+
+// Wrap invoke
+const originalInvoke = app.invoke.bind(app);
+app.invoke = async (input: any, config?: any) => {
+  const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
+  console.log(`[graph.ts] invoke called with recursionLimit: ${finalConfig.recursionLimit}`);
+  return originalInvoke(input, finalConfig);
+};
+
+// Wrap stream
+const originalStream = app.stream.bind(app);
+app.stream = function(input: any, config?: any) {
+  const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
+  console.log(`[graph.ts] stream called with recursionLimit: ${finalConfig.recursionLimit}`);
+  return originalStream(input, finalConfig);
+};
+
+// Wrap streamEvents
+const originalStreamEvents = app.streamEvents.bind(app);
+app.streamEvents = function(input: any, config?: any, streamOptions?: any): any {
+  const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
+  console.log(`[graph.ts] streamEvents called with recursionLimit: ${finalConfig.recursionLimit}`);
+  return originalStreamEvents(input, finalConfig, streamOptions);
+};
+
 export default app;
 
