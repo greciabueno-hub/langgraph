@@ -8,7 +8,7 @@ services:
       - DEBUG_CONVERSATION=${DEBUG_CONVERSATION:-false}
       - DEBUG_AUTOMOTIVE_API=${DEBUG_AUTOMOTIVE_API:-false}
       - AUTOMOTIVE_API_BASE_URL=http://automotive-api:5000
-      - RECURSION_LIMIT=100 
+      - RECURSION_LIMIT=75 
     ports:
       - "2024:2024"
     volumes:

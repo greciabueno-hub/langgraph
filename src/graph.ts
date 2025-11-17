@@ -249,13 +249,33 @@ async function judge(state: ConversationState) {
   if (!emitMsg) {
     return { messages: [] as BaseMessage[] };
   }
+  // Map criterion names to their max deduction points (case-insensitive matching)
+  const criterionMaxPoints: Record<string, number> = {
+    "repeated questions": 10,
+    "generic or off-topic responses": 15,
+    "ignoring budget or constraints": 15,
+    "being too pushy": 10,
+    "using jargon or acronyms": 10,
+    "using jargon/acronyms": 10, // Alternative format
+    "overly verbose or rambling responses": 10,
+    "overly verbose/rambling responses": 10, // Alternative format
+    "failing to acknowledge urgency or emotion": 15,
+    "failing to acknowledge urgency/emotion": 15, // Alternative format
+    "bad or irrelevant recommendation": 15,
+    "bad/irrelevant recommendation": 15, // Alternative format
+  };
+  
   const subscoresText = result.employee.subscores
-    .map((s) => `  • ${s.criterion}: ${s.score}/100`)
+    .map((s) => {
+      const criterionKey = s.criterion.toLowerCase();
+      const max = criterionMaxPoints[criterionKey] ?? 100;
+      return `  • ${s.criterion}: -${s.score.toFixed(1)}/${max} (deduction)`;
+    })
     .join("\n");
   const summary =
     `Evaluation — Overall: ${result.overallScore}/100\n` +
     `Employee: ${result.employee.score}/100 — ${result.employee.justification}\n\n` +
-    `Score Breakdown:\n${subscoresText}\n` +
+    `Deduction Breakdown:\n${subscoresText}\n` +
     (result.comments ? `\nNotes: ${result.comments}` : "");
   return { messages: [new AIMessage(summary)] };
 }

@@ -21,39 +21,73 @@ export type JudgeOutput = {
 
 const defaultRubric = `
 You are an impartial judge evaluating ONLY the EMPLOYEE (salesperson) performance in a car sales conversation.
-Use a 0-100 scale. Be strict and consistent. Consider the entire transcript.
+Use a deduction-based scoring system. Start with 100 points and deduct points for negative behaviors.
+Be strict and consistent. Consider the entire transcript.
 
-Employee scoring rubric (0-100 total):
-- Greeting and professionalism (0-20)
-- Identifying needs: asked targeted questions, clarified constraints (0-25)
-- Product knowledge and recommendations relevance (0-25)
-- Progressing the sale: next steps, appointment, call to action (0-20)
-- Empathy and tone (0-10)
+DEDUCTION-BASED SCORING RUBRIC:
+Start with a base score of 100 points. Evaluate the employee on 8 negative behaviors using a 0-4 scale for each:
+- 0 = No issue observed
+- 1 = Minor issue (occasional occurrence)
+- 2 = Moderate issue (noticeable problem)
+- 3 = Significant issue (frequent problem)
+- 4 = Severe issue (major problem throughout)
 
-Total possible points: 20 + 25 + 25 + 20 + 10 = 100 points
+For each behavior, calculate the deduction as: (score/4) × weight
+
+The 8 behaviors and their weights:
+1. "Repeated questions" - Weight: 10 points
+   Deduct for asking the same question multiple times or re-asking information already provided by the customer.
+
+2. "Generic or off-topic responses" - Weight: 15 points
+   Deduct for giving vague, generic answers that don't address the customer's specific question, or going off-topic.
+
+3. "Ignoring budget or constraints" - Weight: 15 points
+   Deduct for recommending vehicles or options that exceed the customer's stated budget, or ignoring other constraints they mentioned (size, features, etc.).
+
+4. "Being too pushy" - Weight: 10 points
+   Deduct for aggressive sales tactics, pressuring the customer, or not respecting their pace or decisions.
+
+5. "Using jargon or acronyms" - Weight: 10 points
+   Deduct for using technical terms, industry jargon, or acronyms without explanation, making responses unclear to the customer.
+
+6. "Overly verbose or rambling responses" - Weight: 10 points
+   Deduct for responses that are unnecessarily long, repetitive, or rambling without clear structure or purpose.
+
+7. "Failing to acknowledge urgency or emotion" - Weight: 15 points
+   Deduct for not recognizing or responding appropriately to the customer's emotional state, urgency, concerns, or expressed needs.
+
+8. "Bad or irrelevant recommendation" - Weight: 15 points
+   Deduct for recommending vehicles that don't match the customer's stated needs, preferences, or requirements.
+
+Total possible deductions: 10 + 15 + 15 + 10 + 10 + 10 + 15 + 15 = 100 points
+Maximum deduction cap: 80 points (80% of total)
+Final score = 100 - total deductions (minimum score is 20 if all deductions are maximum)
 
 Output JSON only. Always include ALL required fields exactly with these keys:
 - overallScore: number 0-100
 - employee: { 
     score: number 0-100, 
     justification: string,
-    subscores: array of { criterion: string, score: number (0 to max for that category) } for each rubric category
+    subscores: array of { criterion: string, score: number } for each of the 8 behaviors
   }
 - comments: string
 
-For subscores, provide one entry for each of these 5 categories. Score each category out of its maximum points:
-1. "Greeting and professionalism" - score out of 20 (e.g., 15/20)
-2. "Identifying needs" - score out of 25 (e.g., 20/25)
-3. "Product knowledge and recommendations" - score out of 25 (e.g., 18/25)
-4. "Progressing the sale" - score out of 20 (e.g., 12/20)
-5. "Empathy and tone" - score out of 10 (e.g., 8/10)
-
-The score field should be the actual points earned (0 to the max for that category), not a percentage.
+For subscores, provide one entry for each of the 8 behaviors. The score field should be the DEDUCTION amount (0 to the weight for that behavior):
+1. "Repeated questions" - deduction out of 10 (e.g., if score 2/4: deduction = 2/4 × 10 = 5 points)
+2. "Generic or off-topic responses" - deduction out of 15 (e.g., if score 3/4: deduction = 3/4 × 15 = 11.25 points)
+3. "Ignoring budget or constraints" - deduction out of 15
+4. "Being too pushy" - deduction out of 10
+5. "Using jargon or acronyms" - deduction out of 10
+6. "Overly verbose or rambling responses" - deduction out of 10
+7. "Failing to acknowledge urgency or emotion" - deduction out of 15
+8. "Bad or irrelevant recommendation" - deduction out of 15
 
 IMPORTANT: 
-- Calculate the overallScore by summing all the subscores: overallScore = sum of all subscores
-- The employee.score should equal the overallScore (they represent the same total)
-- For example, if subscores are: 15/20 + 20/25 + 18/25 + 12/20 + 8/10 = 73, then overallScore = 73 and employee.score = 73
+- Calculate total deductions by summing all 8 subscores
+- Cap total deductions at 80 points maximum
+- Calculate overallScore = 100 - total deductions (minimum 20)
+- The employee.score should equal the overallScore
+- For example, if deductions total 25 points, then overallScore = 75 and employee.score = 75
 
 If you have no comments, set comments to an empty string \"\".
 Do not omit any fields and do not add extra fields.
