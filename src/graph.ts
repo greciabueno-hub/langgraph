@@ -4,15 +4,18 @@ import { RunnableLambda } from "@langchain/core/runnables";
 import { createAutomotiveApiNode } from "./agents/automotiveApiNode.js";
 import { fetchConversation } from "./agents/conversationApi.js";
 import { createCustomerSimulator } from "./agents/customerSimulator.js";
-import { createConversationJudge } from "./agents/judge.js";
+import { createConversationJudge, type JudgeOutput } from "./agents/judge.js";
 import "dotenv/config";
 
-// Extend MessagesAnnotation to include appointmentCompleted flag
 const ConversationAnnotation = Annotation.Root({
   messages: MessagesAnnotation.spec.messages,
   appointmentCompleted: Annotation<boolean>({
     reducer: (x, y) => y ?? x,
     default: () => false,
+  }),
+  judgeResult: Annotation<JudgeOutput | null>({
+    reducer: (x, y) => y ?? x,
+    default: () => null,
   }),
 });
 
@@ -241,13 +244,32 @@ async function judge(state: ConversationState) {
   });
   const evaluator = createConversationJudge();
   const result = await evaluator.invoke({ transcript: lines });
+  
+  // Validate and fix calculation errors
+  const totalDeductions = result.employee.subscores.reduce((sum, subscore) => sum + subscore.score, 0);
+  const calculatedScore = Math.max(0, Math.min(100, 100 - totalDeductions));
+  
+  if (result.overallScore !== calculatedScore || result.employee.score !== calculatedScore) {
+    console.warn(`[judge] CALCULATION ERROR DETECTED!`);
+    console.warn(`  Reported overallScore: ${result.overallScore}`);
+    console.warn(`  Reported employee.score: ${result.employee.score}`);
+    console.warn(`  Calculated from subscores: ${calculatedScore}`);
+    console.warn(`  Total deductions: ${totalDeductions}`);
+    console.warn(`  Fixing scores to: ${calculatedScore}`);
+    
+    // Fix the scores
+    result.overallScore = calculatedScore;
+    result.employee.score = calculatedScore;
+  }
+  
   const emitMsg = (process.env.JUDGE_EMIT_MESSAGE ?? "true").toLowerCase() === "true";
   if (process.env.DEBUG_JUDGE === "true") {
     console.log("[judge] result");
     console.dir(result, { depth: null });
   }
+  // Store judge result in state for collection
   if (!emitMsg) {
-    return { messages: [] as BaseMessage[] };
+    return { messages: [] as BaseMessage[], judgeResult: result };
   }
   // Map criterion names to their max deduction points (case-insensitive matching)
   const criterionMaxPoints: Record<string, number> = {
@@ -277,7 +299,7 @@ async function judge(state: ConversationState) {
     `Employee: ${result.employee.score}/100 — ${result.employee.justification}\n\n` +
     `Deduction Breakdown:\n${subscoresText}\n` +
     (result.comments ? `\nNotes: ${result.comments}` : "");
-  return { messages: [new AIMessage(summary)] };
+  return { messages: [new AIMessage(summary)], judgeResult: result };
 }
 
 const app = new StateGraph(ConversationAnnotation)
