@@ -5,6 +5,7 @@ import { ai, ax } from "@ax-llm/ax";
 import app from "../graph.js";
 import { personas, type Persona } from "../personas.js";
 import { postCandidatePrompt } from "../agents/promptApi.js";
+import { generateCustomerForPersona } from "../utils/generatePersonaCustomers.js";
 import type { BaseMessage } from "@langchain/core/messages";
 import "dotenv/config";
 
@@ -65,11 +66,48 @@ export interface OptimizationResult {
 }
 
 /**
+ * Generate fresh customers for all personas being tested
+ * This ensures each iteration starts with completely fresh customers and conversations
+ */
+async function generateFreshCustomersForPersonas(
+  personasToTest: Persona[],
+  config: OptimizationConfig
+): Promise<Map<string, { customerId: string; conversationId: string }>> {
+  const apiBaseUrl = config.apiBaseUrl || process.env.AUTOMOTIVE_API_BASE_URL || "http://localhost:5000";
+  const dealerId = Number(process.env.DEALERSHIP_ID || "4675");
+  
+  console.log(`[axOptimizer] Generating fresh customers for ${personasToTest.length} persona(s)...`);
+  
+  const customerMap = new Map<string, { customerId: string; conversationId: string }>();
+  
+  for (const persona of personasToTest) {
+    try {
+      const result = await generateCustomerForPersona(persona, dealerId, apiBaseUrl);
+      customerMap.set(persona.id, {
+        customerId: result.customerId,
+        conversationId: result.conversationId,
+      });
+      console.log(`[axOptimizer] ✓ Generated fresh customer for ${persona.name}`);
+      
+      // Small delay between requests
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error(`[axOptimizer] ✗ Failed to generate customer for ${persona.name}:`, error);
+      throw error;
+    }
+  }
+  
+  console.log(`[axOptimizer] ✓ All fresh customers generated\n`);
+  return customerMap;
+}
+
+/**
  * Run a full simulation with a given prompt and return judge scores
  */
 async function evaluatePrompt(
   prompt: string,
-  config: OptimizationConfig
+  config: OptimizationConfig,
+  freshCustomers?: Map<string, { customerId: string; conversationId: string }>
 ): Promise<{
   averageScore: number;
   scoresByPersona: Record<string, number>;
@@ -97,23 +135,33 @@ async function evaluatePrompt(
     // Set persona
     process.env.CUSTOMER_PERSONA = persona.description;
     
-    // Always use predefined IDs from persona - they must exist in the database
-    if (!persona.customerId || !persona.conversationId) {
-      throw new Error(
-        `Persona "${persona.name}" (${persona.id}) is missing required IDs. ` +
-        `Please provide customerId and conversationId in personas.ts. ` +
-        `These IDs must exist in your backend database.`
-      );
-    }
+    // Use fresh customer/conversation IDs if provided, otherwise fall back to persona defaults
+    let customerId: string;
+    let conversationId: string;
     
-    const customerId = persona.customerId;
-    const conversationId = persona.conversationId;
+    if (freshCustomers && freshCustomers.has(persona.id)) {
+      const freshIds = freshCustomers.get(persona.id)!;
+      customerId = freshIds.customerId;
+      conversationId = freshIds.conversationId;
+      console.log(`[axOptimizer] Using fresh customer ID: ${customerId}`);
+      console.log(`[axOptimizer] Using fresh conversation ID: ${conversationId}`);
+    } else {
+      // Fallback to persona defaults (for backward compatibility)
+      if (!persona.customerId) {
+        throw new Error(
+          `Persona "${persona.name}" (${persona.id}) is missing required customerId. ` +
+          `Please provide customerId in personas.ts or generate fresh customers.`
+        );
+      }
+      customerId = persona.customerId;
+      // Generate a fresh conversationId if no fresh customers provided
+      conversationId = `conv_${customerId}_${Date.now()}`;
+      console.log(`[axOptimizer] Customer ID: ${customerId} (from persona)`);
+      console.log(`[axOptimizer] Conversation ID: ${conversationId} (generated fresh for this test)`);
+    }
     
     process.env.CUSTOMER_ID = customerId;
     process.env.CONVERSATION_ID = conversationId;
-    
-    console.log(`[axOptimizer] Customer ID: ${customerId} (from persona)`);
-    console.log(`[axOptimizer] Conversation ID: ${conversationId} (from persona)`);
     
     // Run the conversation graph
     const finalState = await app.invoke({ messages: [] });
@@ -212,9 +260,17 @@ export async function optimizeBdcPrompt(
   let bestScore = 0;
   const iterations: OptimizationResult["iterations"] = [];
   
+  // Generate fresh customers for initial evaluation
+  const personasToTest = config.personasToTest 
+    ? personas.filter(p => config.personasToTest!.includes(p.id))
+    : personas;
+  
+  console.log("[axOptimizer] Generating fresh customers for initial evaluation...");
+  const initialFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, config);
+  
   // Initial evaluation
   console.log("[axOptimizer] Initial evaluation...");
-  const initialEval = await evaluatePrompt(currentPrompt, config);
+  const initialEval = await evaluatePrompt(currentPrompt, config, initialFreshCustomers);
   bestScore = initialEval.averageScore;
   
         // Extract judge results for each persona
@@ -270,8 +326,12 @@ export async function optimizeBdcPrompt(
     const candidatePrompt = optimizationResult.optimizedPrompt;
     console.log(`[axOptimizer] Candidate prompt generated (length: ${candidatePrompt.length})`);
     
-    // Evaluate the candidate prompt
-    const evalResult = await evaluatePrompt(candidatePrompt, config);
+    // Generate fresh customers for this iteration
+    console.log(`[axOptimizer] Generating fresh customers for iteration ${i}...`);
+    const iterationFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, config);
+    
+    // Evaluate the candidate prompt with fresh customers
+    const evalResult = await evaluatePrompt(candidatePrompt, config, iterationFreshCustomers);
     
     console.log(`[axOptimizer] Candidate score: ${evalResult.averageScore.toFixed(2)}/100`);
     
