@@ -14,8 +14,8 @@ export const personas: Persona[] = [
     id: "budget-conscious",
     name: "Budget-Conscious Buyer",
     description: "Very price-sensitive, needs to stay within strict budget constraints. Asks about financing options and wants to see the best value. May be hesitant about additional features that add cost.",
-    customerId: "5f98e964-db70-4584-baf3-17575a065e7c", 
-    conversationId: "conv_5f98e964-db70-4584-baf3-17575a065e7c_1763497234764", 
+    customerId: "dc2cedec-04fd-462d-a228-48e4cecb3a17", 
+    conversationId: "conv_dc2cedec-04fd-462d-a228-48e4cecb3a17_1763572113455", 
   }
   // {
   //   id: "urgent-buyer",

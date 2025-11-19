@@ -8,6 +8,18 @@ import { postCandidatePrompt } from "../agents/promptApi.js";
 import type { BaseMessage } from "@langchain/core/messages";
 import "dotenv/config";
 
+// Mapping of criterion names to their maximum possible deduction points
+const CRITERION_MAX_POINTS: Record<string, number> = {
+  "Repeated questions": 10,
+  "Generic or off-topic responses": 15,
+  "Ignoring budget or constraints": 15,
+  "Being too pushy": 10,
+  "Using jargon or acronyms": 10,
+  "Overly verbose or rambling responses": 10,
+  "Failing to acknowledge urgency or emotion": 15,
+  "Bad or irrelevant recommendation": 15,
+};
+
 // Re-define ConversationResult here to avoid circular dependency
 export interface ConversationResult {
   persona: Persona;
@@ -40,7 +52,11 @@ export interface OptimizationResult {
       employee: {
         score: number;
         justification: string;
-        subscores: Array<{ criterion: string; score: number }>;
+        subscores: Array<{ 
+          criterion: string; 
+          pointsDeducted: number; 
+          maxPoints: number;
+        }>;
       };
       comments: string;
     }>;
@@ -201,17 +217,25 @@ export async function optimizeBdcPrompt(
   const initialEval = await evaluatePrompt(currentPrompt, config);
   bestScore = initialEval.averageScore;
   
-  // Extract judge results for each persona
-  const initialJudgeResults = initialEval.results.map(r => ({
-    persona: r.persona.name,
-    overallScore: r.judgeResult?.overallScore || 0,
-    employee: r.judgeResult?.employee || {
-      score: 0,
-      justification: "",
-      subscores: [],
-    },
-    comments: r.judgeResult?.comments || "",
-  }));
+        // Extract judge results for each persona
+        const initialJudgeResults = initialEval.results.map(r => ({
+          persona: r.persona.name,
+          overallScore: r.judgeResult?.overallScore || 0,
+          employee: r.judgeResult?.employee ? {
+            score: r.judgeResult.employee.score,
+            justification: r.judgeResult.employee.justification,
+            subscores: r.judgeResult.employee.subscores.map(sub => ({
+              criterion: sub.criterion,
+              pointsDeducted: sub.score,
+              maxPoints: CRITERION_MAX_POINTS[sub.criterion] || 0,
+            })),
+          } : {
+            score: 0,
+            justification: "",
+            subscores: [],
+          },
+          comments: r.judgeResult?.comments || "",
+        }));
   
   iterations.push({
     iteration: 0,
@@ -267,17 +291,25 @@ export async function optimizeBdcPrompt(
       // Continue optimization even if posting fails
     }
     
-    // Extract judge results for each persona
-    const candidateJudgeResults = evalResult.results.map(r => ({
-      persona: r.persona.name,
-      overallScore: r.judgeResult?.overallScore || 0,
-      employee: r.judgeResult?.employee || {
-        score: 0,
-        justification: "",
-        subscores: [],
-      },
-      comments: r.judgeResult?.comments || "",
-    }));
+          // Extract judge results for each persona
+          const candidateJudgeResults = evalResult.results.map(r => ({
+            persona: r.persona.name,
+            overallScore: r.judgeResult?.overallScore || 0,
+            employee: r.judgeResult?.employee ? {
+              score: r.judgeResult.employee.score,
+              justification: r.judgeResult.employee.justification,
+              subscores: r.judgeResult.employee.subscores.map(sub => ({
+                criterion: sub.criterion,
+                pointsDeducted: sub.score,
+                maxPoints: CRITERION_MAX_POINTS[sub.criterion] || 0,
+              })),
+            } : {
+              score: 0,
+              justification: "",
+              subscores: [],
+            },
+            comments: r.judgeResult?.comments || "",
+          }));
     
     // Track iteration
     iterations.push({
@@ -331,6 +363,8 @@ function generateFeedback(iteration: {
   scoresByPersona: Record<string, number>;
 }): string {
   const feedback: string[] = [];
+
+  feedback.push("CRITICAL: The prompt contains template placeholders in the format {{PLACEHOLDER_NAME}} (e.g., {{PERSONALITY_SECTION}}, {{GOALS_SECTION}}, etc.). You MUST preserve ALL placeholders exactly as they appear. Do NOT remove, modify, or change any placeholders. Only optimize the text content BETWEEN placeholders, not the placeholders themselves.");
   
   if (iteration.score < 70) {
     feedback.push("The prompt needs significant improvement. Focus on being more helpful and responsive to customer needs.");

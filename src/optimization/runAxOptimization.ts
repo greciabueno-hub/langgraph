@@ -21,7 +21,11 @@ interface OptimizationRunResult {
         employee: {
           score: number;
           justification: string;
-          subscores: Array<{ criterion: string; score: number }>;
+          subscores: Array<{ 
+            criterion: string; 
+            pointsDeducted: number; 
+            maxPoints: number;
+          }>;
         };
         comments: string;
       }>;
