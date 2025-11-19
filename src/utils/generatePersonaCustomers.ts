@@ -32,7 +32,7 @@ async function generateCustomerForPersona(
   // Add timestamp (last 6 digits) to ensure uniqueness even if random number repeats
   const randomNumber = Math.floor(100000 + Math.random() * 900000); // 100000-999999
   const timestampSuffix = Date.now().toString().slice(-6); // Last 6 digits of timestamp
-  const customerIdPrefix = `eval-${randomNumber}-${timestampSuffix}`;
+  const customerIdPrefix = `test-${randomNumber}-${timestampSuffix}`;
 
   const requestBody = {
     dealer_id: dealerId,
@@ -130,7 +130,7 @@ function updatePersonasFile(
       if (personaWithoutIdsRegex.test(content)) {
         content = content.replace(
           personaWithoutIdsRegex,
-          `$1,$3customerId: "${ids.customerId}",$3conversationId: "${ids.conversationId}",$4`
+          `$1,\n    customerId: "${ids.customerId}", \n    conversationId: "${ids.conversationId}",$4`
         );
         console.log(`[updatePersonas] Added customerId and conversationId for ${personaId}`);
       } else {
