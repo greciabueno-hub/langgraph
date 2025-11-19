@@ -18,6 +18,52 @@ services:
     networks:
       - api_net        # just reference the network here (no external/name here)
 
+  run-multi-persona:
+    build: .
+    container_name: multi-agent-run-personas
+    env_file:
+      - .env
+    environment:
+      - DEBUG_CONVERSATION=${DEBUG_CONVERSATION:-false}
+      - DEBUG_AUTOMOTIVE_API=${DEBUG_AUTOMOTIVE_API:-false}
+      - AUTOMOTIVE_API_BASE_URL=http://automotive-api:5000
+      - RECURSION_LIMIT=75
+      - USE_GENERATED_IDS=${USE_GENERATED_IDS:-false}
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - ./results:/app/results
+    command: ["npm", "run", "run-multi-persona"]
+    networks:
+      - api_net
+
+  optimize-prompt:
+    build: .
+    container_name: multi-agent-optimize-prompt
+    env_file:
+      - .env
+    environment:
+      - DEBUG_CONVERSATION=${DEBUG_CONVERSATION:-false}
+      - DEBUG_AUTOMOTIVE_API=${DEBUG_AUTOMOTIVE_API:-false}
+      - AUTOMOTIVE_API_BASE_URL=http://automotive-api:5000
+      - RECURSION_LIMIT=75
+      - AX_MAX_ITERATIONS=${AX_MAX_ITERATIONS:-2}
+      - AX_TARGET_SCORE=${AX_TARGET_SCORE:-90}
+      - AX_PERSONAS=${AX_PERSONAS:-}
+      - AX_LLM_MODEL=${AX_LLM_MODEL:-gpt-4o-mini}
+      - AX_USE_EXISTING_RESULTS=${AX_USE_EXISTING_RESULTS:-}
+      - PROMPT_API_BASE_URL=${PROMPT_API_BASE_URL:-}
+      - PROMPT_ENDPOINT=${PROMPT_ENDPOINT:-/customer_discovery}
+      - AGENT_NAME=${AGENT_NAME:-customer_discovery}
+      - SAVE_OPTIMIZATION_RESULTS=${SAVE_OPTIMIZATION_RESULTS:-true}
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - ./results:/app/results
+    command: ["npm", "run", "optimize-prompt"]
+    networks:
+      - api_net
+
 networks:
   api_net:
     external: true     # declare it here

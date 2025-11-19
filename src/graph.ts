@@ -21,7 +21,7 @@ const ConversationAnnotation = Annotation.Root({
 
 type ConversationState = typeof ConversationAnnotation.State;
 
-const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 100);
+const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 50);
 
 function countTotalMessages(messages: BaseMessage[]) {
   return messages.length;
@@ -163,13 +163,18 @@ async function salesperson(state: ConversationState) {
     response: (result as any)?.response,
     messages: Array.isArray((result as any)?.messages) ? (result as any).messages.length : "not an array",
   });
+  
+  // Log the actual messages array structure to see what's inside
+  if (Array.isArray((result as any)?.messages)) {
+    console.log("[salesperson] Messages array contents:", JSON.stringify((result as any).messages, null, 2));
+  }
 
   // Check if workflowStep in updatedState is "COMPLETED" - this indicates the conversation should end
   const stateUpdate = (result as any)?.updatedState;
   const workflowStep = stateUpdate && typeof stateUpdate.workflowStep === "string" 
     ? stateUpdate.workflowStep 
     : "";
-  const appointmentCompleted = workflowStep === "COMPLETED";
+  const appointmentCompleted = workflowStep === "HUMAN_HANDOFF";
   
   if (appointmentCompleted) {
     console.log("[salesperson] workflowStep is 'COMPLETED' - conversation should end.");
