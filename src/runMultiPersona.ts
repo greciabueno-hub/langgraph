@@ -68,6 +68,17 @@ async function runConversationWithPersona(persona: Persona): Promise<Conversatio
   // Run the conversation graph
   const finalState = await app.invoke({ messages: [] });
 
+  // Save conversation log at end of conversation
+  if (process.env.SAVE_CONVERSATION_LOGS === "true") {
+    try {
+      const { conversationLogger } = await import("./utils/conversationLogger.js");
+      const filepath = await conversationLogger.saveToFile(conversationId);
+      console.log(`[runMultiPersona] Final conversation log saved: ${filepath}`);
+    } catch (error) {
+      console.warn("[runMultiPersona] Failed to save final conversation log:", error);
+    }
+  }
+
   // Extract results
   const judgeResult = finalState.judgeResult || null;
   const transcript = formatTranscript(finalState.messages || []);
@@ -117,7 +128,7 @@ function calculateAggregatedSummary(results: ConversationResult[]): AggregatedRe
         if (!behaviorDeductions[behavior]) {
           behaviorDeductions[behavior] = [];
         }
-        behaviorDeductions[behavior]!.push(subscore.score);
+        behaviorDeductions[behavior]!.push(subscore.pointsDeducted);
       });
     }
   });

@@ -25,6 +25,8 @@ interface OptimizationRunResult {
             criterion: string; 
             pointsDeducted: number; 
             maxPoints: number;
+            rating?: number; // 0-4 rating from LLM
+            explanation?: string; // Optional explanation from LLM
           }>;
         };
         comments: string;
@@ -138,8 +140,15 @@ async function runAxOptimization(config: OptimizationConfig = {}): Promise<Optim
 
 // CLI entry point
 async function main() {
+  const maxIterationsEnv = process.env.AX_MAX_ITERATIONS;
+  const maxIterations = Number(maxIterationsEnv || "2");
+  
+  console.log("[main] Environment variable AX_MAX_ITERATIONS:", maxIterationsEnv || "not set (using default: 2)");
+  console.log("[main] Parsed maxIterations:", maxIterations);
+  console.log("[main] Expected total iterations:", maxIterations + 1, "(1 initial +", maxIterations, "optimization iterations)\n");
+  
   const config: OptimizationConfig = {
-    maxIterations: Number(process.env.AX_MAX_ITERATIONS || "2"),
+    maxIterations,
     targetScore: Number(process.env.AX_TARGET_SCORE || "90"),
     ...(process.env.AX_PERSONAS && {
       personasToTest: process.env.AX_PERSONAS.split(",").map(s => s.trim()),
@@ -162,10 +171,53 @@ async function main() {
         await mkdir(resultsDir, { recursive: true });
       }
       
-      const filename = `ax-optimization-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      
+      // Save main optimization results
+      const filename = `ax-optimization-${timestamp}.json`;
       const filepath = join(resultsDir, filename);
       await writeFile(filepath, JSON.stringify(result, null, 2));
       console.log(`Results saved to: ${filepath}`);
+      
+      // Save detailed judge evaluations to separate file
+      const judgeFilename = `judge-evaluations-${timestamp}.json`;
+      const judgeFilepath = join(resultsDir, judgeFilename);
+      
+      // Extract all judge results with detailed breakdown
+      const judgeEvaluations = {
+        timestamp: result.timestamp,
+        initialPrompt: result.initialPrompt,
+        bestPrompt: result.optimizationResult.bestPrompt,
+        bestScore: result.optimizationResult.bestScore,
+        iterations: result.optimizationResult.iterations.map(iter => ({
+          iteration: iter.iteration,
+          prompt: iter.prompt,
+          averageScore: iter.score,
+          scoresByPersona: iter.scoresByPersona,
+          judgeEvaluations: iter.judgeResults?.map(judge => ({
+            persona: judge.persona,
+            overallScore: judge.overallScore,
+            employee: {
+              score: judge.employee.score,
+              justification: judge.employee.justification,
+              behaviorBreakdown: judge.employee.subscores.map(sub => ({
+                criterion: sub.criterion,
+                rating: sub.rating || 0, // 0-4 rating from LLM
+                explanation: sub.explanation || "", // LLM's explanation
+                pointsDeducted: sub.pointsDeducted, // Calculated: (rating/4) × maxPoints
+                maxPoints: sub.maxPoints,
+                deductionPercentage: sub.maxPoints > 0 
+                  ? ((sub.pointsDeducted / sub.maxPoints) * 100).toFixed(1) + "%"
+                  : "0%",
+              })),
+            },
+            comments: judge.comments,
+          })) || [],
+        })),
+      };
+      
+      await writeFile(judgeFilepath, JSON.stringify(judgeEvaluations, null, 2));
+      console.log(`Detailed judge evaluations saved to: ${judgeFilepath}`);
     }
     
     process.exit(0);

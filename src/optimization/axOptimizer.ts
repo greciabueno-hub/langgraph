@@ -5,7 +5,8 @@ import { ai, ax } from "@ax-llm/ax";
 import app from "../graph.js";
 import { personas, type Persona } from "../personas.js";
 import { postCandidatePrompt } from "../agents/promptApi.js";
-import { generateCustomerForPersona } from "../utils/generatePersonaCustomers.js";
+import { generateFreshCustomersForPersonas } from "../utils/generatePersonaCustomers.js";
+import { type JudgeOutput } from "../agents/judge.js";
 import type { BaseMessage } from "@langchain/core/messages";
 import "dotenv/config";
 
@@ -25,7 +26,7 @@ const CRITERION_MAX_POINTS: Record<string, number> = {
 export interface ConversationResult {
   persona: Persona;
   timestamp: string;
-  judgeResult: { overallScore: number; employee: { score: number; justification: string; subscores: Array<{ criterion: string; score: number }> }; comments: string } | null;
+  judgeResult: JudgeOutput | null;
   transcript: Array<{ role: string; content: string }>;
   messageCount: number;
   appointmentCompleted: boolean;
@@ -65,41 +66,7 @@ export interface OptimizationResult {
   totalEvaluations: number;
 }
 
-/**
- * Generate fresh customers for all personas being tested
- * This ensures each iteration starts with completely fresh customers and conversations
- */
-async function generateFreshCustomersForPersonas(
-  personasToTest: Persona[],
-  config: OptimizationConfig
-): Promise<Map<string, { customerId: string; conversationId: string }>> {
-  const apiBaseUrl = config.apiBaseUrl || process.env.AUTOMOTIVE_API_BASE_URL || "http://localhost:5000";
-  const dealerId = Number(process.env.DEALERSHIP_ID || "4675");
-  
-  console.log(`[axOptimizer] Generating fresh customers for ${personasToTest.length} persona(s)...`);
-  
-  const customerMap = new Map<string, { customerId: string; conversationId: string }>();
-  
-  for (const persona of personasToTest) {
-    try {
-      const result = await generateCustomerForPersona(persona, dealerId, apiBaseUrl);
-      customerMap.set(persona.id, {
-        customerId: result.customerId,
-        conversationId: result.conversationId,
-      });
-      console.log(`[axOptimizer] ✓ Generated fresh customer for ${persona.name}`);
-      
-      // Small delay between requests
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    } catch (error) {
-      console.error(`[axOptimizer] ✗ Failed to generate customer for ${persona.name}:`, error);
-      throw error;
-    }
-  }
-  
-  console.log(`[axOptimizer] ✓ All fresh customers generated\n`);
-  return customerMap;
-}
+// generateFreshCustomersForPersonas is imported from generatePersonaCustomers.ts
 
 /**
  * Run a full simulation with a given prompt and return judge scores
@@ -266,7 +233,9 @@ export async function optimizeBdcPrompt(
     : personas;
   
   console.log("[axOptimizer] Generating fresh customers for initial evaluation...");
-  const initialFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, config);
+  const initialApiBaseUrl = config.apiBaseUrl || process.env.AUTOMOTIVE_API_BASE_URL || "http://localhost:5000";
+  const initialDealerId = Number(process.env.DEALERSHIP_ID || "4675");
+  const initialFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, initialDealerId, initialApiBaseUrl, 0);
   
   // Initial evaluation
   console.log("[axOptimizer] Initial evaluation...");
@@ -282,8 +251,10 @@ export async function optimizeBdcPrompt(
             justification: r.judgeResult.employee.justification,
             subscores: r.judgeResult.employee.subscores.map(sub => ({
               criterion: sub.criterion,
-              pointsDeducted: sub.score,
-              maxPoints: CRITERION_MAX_POINTS[sub.criterion] || 0,
+              pointsDeducted: sub.pointsDeducted,
+              maxPoints: sub.maxPoints,
+              rating: sub.rating, // 0-4 rating from LLM
+              explanation: sub.explanation, // Optional explanation from LLM
             })),
           } : {
             score: 0,
@@ -326,9 +297,11 @@ export async function optimizeBdcPrompt(
     const candidatePrompt = optimizationResult.optimizedPrompt;
     console.log(`[axOptimizer] Candidate prompt generated (length: ${candidatePrompt.length})`);
     
-    // Generate fresh customers for this iteration
-    console.log(`[axOptimizer] Generating fresh customers for iteration ${i}...`);
-    const iterationFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, config);
+          // Generate fresh customers for this iteration
+          console.log(`[axOptimizer] Generating fresh customers for iteration ${i}...`);
+          const iterApiBaseUrl = config.apiBaseUrl || process.env.AUTOMOTIVE_API_BASE_URL || "http://localhost:5000";
+          const iterDealerId = Number(process.env.DEALERSHIP_ID || "4675");
+          const iterationFreshCustomers = await generateFreshCustomersForPersonas(personasToTest, iterDealerId, iterApiBaseUrl, i);
     
     // Evaluate the candidate prompt with fresh customers
     const evalResult = await evaluatePrompt(candidatePrompt, config, iterationFreshCustomers);
@@ -360,8 +333,10 @@ export async function optimizeBdcPrompt(
               justification: r.judgeResult.employee.justification,
               subscores: r.judgeResult.employee.subscores.map(sub => ({
                 criterion: sub.criterion,
-                pointsDeducted: sub.score,
-                maxPoints: CRITERION_MAX_POINTS[sub.criterion] || 0,
+                pointsDeducted: sub.pointsDeducted,
+                maxPoints: sub.maxPoints,
+                rating: sub.rating, // 0-4 rating from LLM
+                explanation: sub.explanation, // Optional explanation from LLM
               })),
             } : {
               score: 0,
@@ -394,7 +369,8 @@ export async function optimizeBdcPrompt(
     
     // Early exit if target score reached
     if (bestScore >= targetScore) {
-      console.log(`[axOptimizer] Target score reached! Stopping early.`);
+      console.log(`[axOptimizer] Target score reached (${bestScore.toFixed(2)} >= ${targetScore})! Stopping early.`);
+      console.log(`[axOptimizer] Completed ${i} optimization iteration(s) out of ${maxIterations} planned.`);
       break;
     }
   }
@@ -403,8 +379,13 @@ export async function optimizeBdcPrompt(
   console.log("OPTIMIZATION COMPLETE");
   console.log("=".repeat(60));
   console.log(`Best score: ${bestScore.toFixed(2)}/100`);
+  console.log(`Target score: ${targetScore}/100`);
   console.log(`Best prompt length: ${bestPrompt.length}`);
-  console.log(`Total iterations: ${iterations.length}`);
+  console.log(`Total iterations completed: ${iterations.length} (expected: ${maxIterations + 1})`);
+  if (iterations.length < maxIterations + 1) {
+    console.log(`⚠️  Note: Only ${iterations.length} iteration(s) completed, expected ${maxIterations + 1}`);
+    console.log(`   This could be due to early exit (target score reached) or an error.`);
+  }
   console.log("=".repeat(60) + "\n");
   
   return {

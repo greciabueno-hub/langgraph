@@ -20,12 +20,49 @@ interface Persona {
 }
 
 /**
+ * Generate a random first and last name for a customer
+ * Ensures unique names per iteration by including timestamp/random component
+ */
+function generateRandomName(iteration?: number): { firstName: string; lastName: string } {
+  const firstNames = [
+    "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Avery", "Quinn",
+    "Sam", "Dakota", "Blake", "Cameron", "Drew", "Emery", "Finley", "Hayden",
+    "Jamie", "Kendall", "Logan", "Parker", "Reese", "Sage", "Skylar", "Tyler",
+    "Chris", "Dana", "Jesse", "Kai", "Noah", "River", "Rowan", "Sage"
+  ];
+  
+  const lastNames = [
+    "Anderson", "Brown", "Davis", "Garcia", "Harris", "Jackson", "Johnson", "Jones",
+    "Lee", "Martinez", "Miller", "Moore", "Robinson", "Smith", "Taylor", "Thomas",
+    "Thompson", "Walker", "White", "Williams", "Wilson", "Wright", "Young", "Adams",
+    "Baker", "Clark", "Collins", "Cook", "Cooper", "Evans", "Green", "Hall"
+  ];
+  
+  // Use iteration number or random index to select names
+  // Multiply by different primes to ensure different combinations per iteration
+  const randomSeed = iteration !== undefined 
+    ? (iteration * 17 + Date.now() % 10000) % (firstNames.length * lastNames.length)
+    : Math.floor(Math.random() * (firstNames.length * lastNames.length));
+  
+  const firstNameIndex = randomSeed % firstNames.length;
+  const lastNameIndex = Math.floor(randomSeed / firstNames.length) % lastNames.length;
+  
+  // Return clean names without numeric suffix (backend may not like numbers in names)
+  // The uniqueness comes from the customer_id and email, not the name
+  return {
+    firstName: firstNames[firstNameIndex] || "Customer",
+    lastName: lastNames[lastNameIndex] || "User"
+  };
+}
+
+/**
  * Generate a customer for a persona using the /customers/event endpoint
  */
 async function generateCustomerForPersona(
   persona: Persona,
   dealerId: number,
-  baseUrl: string
+  baseUrl: string,
+  iteration?: number
 ): Promise<GenerateCustomerResponse> {
   const timestamp = new Date().toISOString();
   // Generate a random 6-digit number for the customer_id
@@ -33,6 +70,10 @@ async function generateCustomerForPersona(
   const randomNumber = Math.floor(100000 + Math.random() * 900000); // 100000-999999
   const timestampSuffix = Date.now().toString().slice(-6); // Last 6 digits of timestamp
   const customerIdPrefix = `test-${randomNumber}-${timestampSuffix}`;
+
+  // Generate unique name for this iteration
+  const { firstName, lastName } = generateRandomName(iteration);
+  const uniqueSuffix = Math.floor(Math.random() * 1000);
 
   const requestBody = {
     dealer_id: dealerId,
@@ -42,17 +83,19 @@ async function generateCustomerForPersona(
       account_type: "Person",
       customer_id: customerIdPrefix,
       person: {
-        first_name: persona.name.split(" ")[0] || "Customer",
-        last_name: persona.name.split(" ").slice(1).join(" ") || persona.id,
+        first_name: firstName,
+        last_name: lastName,
         communications: [
           {
             communication_type: "PrimaryEmail",
-            email_address: `${persona.id}@example.com`,
+            email_address: `${persona.id}-${iteration !== undefined ? iteration : '0'}-${uniqueSuffix}@example.com`,
           },
         ],
       },
     },
   };
+  
+  console.log(`[generateCustomer] Generated name: ${firstName} ${lastName} (iteration: ${iteration !== undefined ? iteration : 'N/A'})`);
 
   const url = `${baseUrl}/customers/event`;
 
@@ -262,6 +305,38 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error("Fatal error:", error);
     process.exit(1);
   });
+}
+
+/**
+ * Generate fresh customers for multiple personas
+ * Returns a map of persona ID to customer/conversation IDs
+ */
+export async function generateFreshCustomersForPersonas(
+  personas: Persona[],
+  dealerId: number,
+  baseUrl: string,
+  iteration?: number
+): Promise<Map<string, { customerId: string; conversationId: string }>> {
+  const customerMap = new Map<string, { customerId: string; conversationId: string }>();
+  
+  for (const persona of personas) {
+    try {
+      // Pass iteration number to ensure unique names per iteration
+      const result = await generateCustomerForPersona(persona, dealerId, baseUrl, iteration);
+      customerMap.set(persona.id, {
+        customerId: result.customerId,
+        conversationId: result.conversationId,
+      });
+      
+      // Small delay between requests
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error(`[generateFreshCustomersForPersonas] ✗ Failed to generate customer for ${persona.name}:`, error);
+      // Continue with other personas
+    }
+  }
+  
+  return customerMap;
 }
 
 export { main, generateCustomerForPersona };

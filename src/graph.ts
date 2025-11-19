@@ -4,7 +4,7 @@ import { RunnableLambda } from "@langchain/core/runnables";
 import { createAutomotiveApiNode } from "./agents/automotiveApiNode.js";
 import { fetchConversation } from "./agents/conversationApi.js";
 import { createCustomerSimulator } from "./agents/customerSimulator.js";
-import { createConversationJudge, type JudgeOutput } from "./agents/judge.js";
+import { createConversationJudge, calculateJudgeScores, type JudgeOutput } from "./agents/judge.js";
 import "dotenv/config";
 
 const ConversationAnnotation = Annotation.Root({
@@ -143,6 +143,59 @@ async function salesperson(state: ConversationState) {
   const lastHuman = [...state.messages].reverse().find((m) => m.type === "human");
   const content = typeof lastHuman?.content === "string" ? lastHuman.content : "";
 
+  // Build conversation history from state.messages to send to backend
+  const conversationHistory = state.messages.map((m) => {
+    const text = typeof m.content === "string" ? m.content : "";
+    return {
+      role: m.type === "ai" ? "EMPLOYEE" as const : m.type === "human" ? "CUSTOMER" as const : "CUSTOMER" as const,
+      content: text,
+    };
+  });
+
+  // Log what we're sending to the backend
+  if (process.env.DEBUG_CONVERSATION === "true") {
+    console.log("[salesperson] Sending to backend:", {
+      content: content.substring(0, 100) + (content.length > 100 ? "..." : ""),
+      customerId,
+      conversationId,
+      totalMessagesInState: state.messages.length,
+      conversationHistoryLength: conversationHistory.length,
+      lastFewMessages: state.messages.slice(-4).map(m => ({
+        type: m.type,
+        content: (typeof m.content === "string" ? m.content : "").substring(0, 50)
+      }))
+    });
+  }
+
+  // Log full conversation state for debugging (if enabled)
+  let logEntry: any = null;
+  if (process.env.SAVE_CONVERSATION_LOGS === "true") {
+    const { conversationLogger } = await import("./utils/conversationLogger.js");
+    logEntry = conversationLogger.logRequest(
+      customerId,
+      conversationId,
+      {
+        url: `${baseUrl}/workflows/process`,
+        method: "POST",
+        body: {
+          content,
+          channel,
+          customerId,
+          conversationId,
+          metadata: { dealershipId, from: fromNumber, sendRealResponses: true },
+          conversationHistory,
+        },
+        fullConversationState: {
+          totalMessages: state.messages.length,
+          messages: state.messages.map(m => ({
+            type: m.type,
+            content: typeof m.content === "string" ? m.content : "",
+          })),
+        },
+      }
+    );
+  }
+
   const api = createAutomotiveApiNode(baseUrl);
   const result = await api.invoke({
     content,
@@ -150,7 +203,21 @@ async function salesperson(state: ConversationState) {
     customerId,
     conversationId,
     metadata: { dealershipId, from: fromNumber, sendRealResponses: true },
+    conversationHistory, // Send full conversation history to backend
   });
+  
+  // Save conversation log after each turn (optional - can be done at end of conversation)
+  if (process.env.SAVE_CONVERSATION_LOGS === "true" && logEntry) {
+    try {
+      const { conversationLogger } = await import("./utils/conversationLogger.js");
+      const filepath = await conversationLogger.saveToFile(conversationId);
+      if (logEntry.turnNumber === 1 || logEntry.turnNumber % 5 === 0) {
+        console.log(`[salesperson] Conversation log saved: ${filepath}`);
+      }
+    } catch (error) {
+      console.warn("[salesperson] Failed to save conversation log:", error);
+    }
+  }
 
   // Debug: Log full response payload to see appointment confirmation signals
   console.log("[salesperson] Full API Response Payload:", JSON.stringify(result, null, 2));
@@ -171,6 +238,16 @@ async function salesperson(state: ConversationState) {
 
   // Check if workflowStep in updatedState is "COMPLETED" - this indicates the conversation should end
   const stateUpdate = (result as any)?.updatedState;
+  
+  // Log updatedState.messages to see full conversation history from backend
+  if (stateUpdate && Array.isArray(stateUpdate.messages)) {
+    console.log("[salesperson] Backend conversation history (updatedState.messages):", 
+      stateUpdate.messages.length, "messages");
+    if (process.env.DEBUG_CONVERSATION === "true") {
+      console.log("[salesperson] Last 3 messages from backend:", 
+        JSON.stringify(stateUpdate.messages.slice(-3), null, 2));
+    }
+  }
   const workflowStep = stateUpdate && typeof stateUpdate.workflowStep === "string" 
     ? stateUpdate.workflowStep 
     : "";
@@ -191,17 +268,42 @@ async function salesperson(state: ConversationState) {
     })
   );
   const raw: any[] = [];
-  // 0) Single assistant reply as per API schema
-  if (typeof (result as any)?.response === "string" && (result as any).response.length > 0) {
-    raw.push({
-      role: "ASSISTANT",
-      type: "assistant_response",
-      content: (result as any).response,
-      timestamp: (result as any)?.timestamp ?? undefined,
-    });
+  
+  // Check updatedState.messages first (this is where the backend stores full conversation history)
+  if (stateUpdate && Array.isArray(stateUpdate.messages)) {
+    // Backend maintains full conversation in updatedState.messages
+    // Extract only new messages we haven't seen yet
+    for (const msg of stateUpdate.messages) {
+      const content = typeof msg?.content === "string" ? msg.content : "";
+      const role = typeof msg?.role === "string" ? msg.role : "";
+      const timestamp = typeof msg?.timestamp === "string" ? msg.timestamp : undefined;
+      
+      if (content && role) {
+        raw.push({
+          role: role.toUpperCase(),
+          type: role.toLowerCase() === "assistant" ? "assistant_response" : "customer_message",
+          content,
+          timestamp,
+        });
+      }
+    }
   }
-  // 1) Primary messages array from POST
-  if (Array.isArray((result as any)?.messages)) {
+  
+  // 0) Single assistant reply as per API schema (fallback)
+  if (typeof (result as any)?.response === "string" && (result as any).response.length > 0) {
+    // Check if we already have this response in raw
+    const responseExists = raw.some(m => m.content === (result as any).response);
+    if (!responseExists) {
+      raw.push({
+        role: "ASSISTANT",
+        type: "assistant_response",
+        content: (result as any).response,
+        timestamp: (result as any)?.timestamp ?? undefined,
+      });
+    }
+  }
+  // 1) Primary messages array from POST (fallback if updatedState.messages not available)
+  if (raw.length === 0 && Array.isArray((result as any)?.messages)) {
     raw.push(...((result as any).messages as any[]));
   }
 
@@ -248,24 +350,12 @@ async function judge(state: ConversationState) {
     return `${role}: ${text}`;
   });
   const evaluator = createConversationJudge();
-  const result = await evaluator.invoke({ transcript: lines });
+  const rawEvaluation = await evaluator.invoke({ transcript: lines });
   
-  // Validate and fix calculation errors
-  const totalDeductions = result.employee.subscores.reduce((sum, subscore) => sum + subscore.score, 0);
-  const calculatedScore = Math.max(0, Math.min(100, 100 - totalDeductions));
+  // Calculate scores using function (not LLM math)
+  const result = calculateJudgeScores(rawEvaluation);
   
-  if (result.overallScore !== calculatedScore || result.employee.score !== calculatedScore) {
-    console.warn(`[judge] CALCULATION ERROR DETECTED!`);
-    console.warn(`  Reported overallScore: ${result.overallScore}`);
-    console.warn(`  Reported employee.score: ${result.employee.score}`);
-    console.warn(`  Calculated from subscores: ${calculatedScore}`);
-    console.warn(`  Total deductions: ${totalDeductions}`);
-    console.warn(`  Fixing scores to: ${calculatedScore}`);
-    
-    // Fix the scores
-    result.overallScore = calculatedScore;
-    result.employee.score = calculatedScore;
-  }
+  console.log(`[judge] Calculated score: ${result.overallScore}/100 (from behavior ratings)`);
   
   const emitMsg = (process.env.JUDGE_EMIT_MESSAGE ?? "true").toLowerCase() === "true";
   if (process.env.DEBUG_JUDGE === "true") {
@@ -295,8 +385,8 @@ async function judge(state: ConversationState) {
   const subscoresText = result.employee.subscores
     .map((s) => {
       const criterionKey = s.criterion.toLowerCase();
-      const max = criterionMaxPoints[criterionKey] ?? 100;
-      return `  • ${s.criterion}: -${s.score.toFixed(1)}/${max} (deduction)`;
+      const max = s.maxPoints ?? (criterionMaxPoints[criterionKey] ?? 100);
+      return `  • ${s.criterion}: -${s.pointsDeducted.toFixed(1)}/${max} (deduction, rating: ${s.rating}/4)`;
     })
     .join("\n");
   const summary =
