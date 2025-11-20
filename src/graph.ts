@@ -46,9 +46,6 @@ async function syncFromBackend(state: ConversationState) {
 
   // Only fetch from backend on the very first sync; afterwards we rely on POST responses.
   if (state.messages.length > 0) {
-    if (process.env.DEBUG_CONVERSATION === "true") {
-      console.log("[syncFromBackend] skipping GET after first sync (messages already present)");
-    }
     return { messages: [] as BaseMessage[] };
   }
 
@@ -72,14 +69,6 @@ async function syncFromBackend(state: ConversationState) {
     const content = typeof first?.content === "string" ? first.content : "";
     if (content.length > 0) {
       mapped = ["AGENT: " + content];
-    }
-  }
-  // Optional visibility in console while developing
-  console.log("[syncFromBackend] fetchedLines:", mapped.length, "customerId:", customerId, "dealer:", dealershipId);
-  if (process.env.DEBUG_CONVERSATION === "true") {
-    console.log("[syncFromBackend] lines:");
-    for (const line of mapped) {
-      console.log("  -", line);
     }
   }
 
@@ -152,20 +141,6 @@ async function salesperson(state: ConversationState) {
     };
   });
 
-  // Log what we're sending to the backend
-  if (process.env.DEBUG_CONVERSATION === "true") {
-    console.log("[salesperson] Sending to backend:", {
-      content: content.substring(0, 100) + (content.length > 100 ? "..." : ""),
-      customerId,
-      conversationId,
-      totalMessagesInState: state.messages.length,
-      conversationHistoryLength: conversationHistory.length,
-      lastFewMessages: state.messages.slice(-4).map(m => ({
-        type: m.type,
-        content: (typeof m.content === "string" ? m.content : "").substring(0, 50)
-      }))
-    });
-  }
 
   // Log full conversation state for debugging (if enabled)
   let logEntry: any = null;
@@ -210,54 +185,21 @@ async function salesperson(state: ConversationState) {
   if (process.env.SAVE_CONVERSATION_LOGS === "true" && logEntry) {
     try {
       const { conversationLogger } = await import("./utils/conversationLogger.js");
-      const filepath = await conversationLogger.saveToFile(conversationId);
-      if (logEntry.turnNumber === 1 || logEntry.turnNumber % 5 === 0) {
-        console.log(`[salesperson] Conversation log saved: ${filepath}`);
-      }
+      await conversationLogger.saveToFile(conversationId);
     } catch (error) {
-      console.warn("[salesperson] Failed to save conversation log:", error);
+      // Silent fail
     }
   }
 
-  // Debug: Log full response payload to see appointment confirmation signals
-  console.log("[salesperson] Full API Response Payload:", JSON.stringify(result, null, 2));
-  console.log("[salesperson] Response Fields:", {
-    success: (result as any)?.success,
-    workflowType: (result as any)?.workflowType,
-    completed: (result as any)?.completed,
-    nextAction: (result as any)?.nextAction,
-    updatedState: (result as any)?.updatedState,
-    response: (result as any)?.response,
-    messages: Array.isArray((result as any)?.messages) ? (result as any).messages.length : "not an array",
-  });
-  
-  // Log the actual messages array structure to see what's inside
-  if (Array.isArray((result as any)?.messages)) {
-    console.log("[salesperson] Messages array contents:", JSON.stringify((result as any).messages, null, 2));
-  }
 
   // Check if workflowStep in updatedState is "COMPLETED" - this indicates the conversation should end
   const stateUpdate = (result as any)?.updatedState;
   
-  // Log updatedState.messages to see full conversation history from backend
-  if (stateUpdate && Array.isArray(stateUpdate.messages)) {
-    console.log("[salesperson] Backend conversation history (updatedState.messages):", 
-      stateUpdate.messages.length, "messages");
-    if (process.env.DEBUG_CONVERSATION === "true") {
-      console.log("[salesperson] Last 3 messages from backend:", 
-        JSON.stringify(stateUpdate.messages.slice(-3), null, 2));
-    }
-  }
   const workflowStep = stateUpdate && typeof stateUpdate.workflowStep === "string" 
     ? stateUpdate.workflowStep 
     : "";
   const appointmentCompleted = workflowStep === "HUMAN_HANDOFF";
   
-  if (appointmentCompleted) {
-    console.log("[salesperson] workflowStep is 'COMPLETED' - conversation should end.");
-  } else if (workflowStep) {
-    console.log("[salesperson] workflowStep:", workflowStep, "- continuing conversation.");
-  }
 
   // Immediately enrich context from POST response so the next customer turn can see it,
   // without waiting for the backend projection to conversationHistory.
@@ -269,19 +211,53 @@ async function salesperson(state: ConversationState) {
   );
   const raw: any[] = [];
   
-  // Check updatedState.messages first (this is where the backend stores full conversation history)
-  if (stateUpdate && Array.isArray(stateUpdate.messages)) {
-    // Backend maintains full conversation in updatedState.messages
-    // Extract only new messages we haven't seen yet
-    for (const msg of stateUpdate.messages) {
+  // Primary: Extract latest ASSISTANT message from result.messages (contains the newest response)
+  if (Array.isArray((result as any)?.messages) && (result as any).messages.length > 0) {
+    // result.messages contains the latest assistant response(s)
+    for (const msg of (result as any).messages) {
+      const content = typeof msg?.content === "string" ? msg.content : "";
+      const type = typeof msg?.type === "string" ? msg.type : "";
+      const timestamp = typeof msg?.timestamp === "string" ? msg.timestamp : undefined;
+      
+      // Only process assistant responses
+      if (content && (type === "assistant_response" || type === "vehicle_recommendation" || type === "workflow_response")) {
+        const formattedLine = `AGENT: ${content}`;
+        
+        // Only add if this message doesn't already exist in state.messages
+        if (!existingLines.has(formattedLine)) {
+          raw.push({
+            role: "ASSISTANT",
+            type: "assistant_response",
+            content,
+            timestamp,
+          });
+        }
+      }
+    }
+  }
+  
+  // Fallback: Extract newest ASSISTANT messages from updatedState.messages (if result.messages not available)
+  if (raw.length === 0 && stateUpdate && Array.isArray(stateUpdate.messages)) {
+    // Process in reverse order (from bottom to top) to get newest messages first
+    for (let i = stateUpdate.messages.length - 1; i >= 0; i--) {
+      const msg = stateUpdate.messages[i];
       const content = typeof msg?.content === "string" ? msg.content : "";
       const role = typeof msg?.role === "string" ? msg.role : "";
       const timestamp = typeof msg?.timestamp === "string" ? msg.timestamp : undefined;
       
-      if (content && role) {
+      // Only process ASSISTANT messages
+      if (content && role && role.toUpperCase() === "ASSISTANT") {
+        const formattedLine = `AGENT: ${content}`;
+        
+        // If this message already exists in state.messages, we've reached old messages - stop
+        if (existingLines.has(formattedLine)) {
+          break;
+        }
+        
+        // This is a new ASSISTANT message - add it
         raw.push({
-          role: role.toUpperCase(),
-          type: role.toLowerCase() === "assistant" ? "assistant_response" : "customer_message",
+          role: "ASSISTANT",
+          type: "assistant_response",
           content,
           timestamp,
         });
@@ -289,22 +265,20 @@ async function salesperson(state: ConversationState) {
     }
   }
   
-  // 0) Single assistant reply as per API schema (fallback)
-  if (typeof (result as any)?.response === "string" && (result as any).response.length > 0) {
-    // Check if we already have this response in raw
-    const responseExists = raw.some(m => m.content === (result as any).response);
-    if (!responseExists) {
+  // Last resort: Single assistant reply from result.response (fallback)
+  if (raw.length === 0 && typeof (result as any)?.response === "string" && (result as any).response.length > 0) {
+    const responseContent = (result as any).response;
+    const formattedResponseLine = `AGENT: ${responseContent}`;
+    
+    // Only add if this message doesn't already exist in state.messages
+    if (!existingLines.has(formattedResponseLine)) {
       raw.push({
         role: "ASSISTANT",
         type: "assistant_response",
-        content: (result as any).response,
+        content: responseContent,
         timestamp: (result as any)?.timestamp ?? undefined,
       });
     }
-  }
-  // 1) Primary messages array from POST (fallback if updatedState.messages not available)
-  if (raw.length === 0 && Array.isArray((result as any)?.messages)) {
-    raw.push(...((result as any).messages as any[]));
   }
 
   // Sort by timestamp if present to preserve server ordering
@@ -355,13 +329,7 @@ async function judge(state: ConversationState) {
   // Calculate scores using function (not LLM math)
   const result = calculateJudgeScores(rawEvaluation);
   
-  console.log(`[judge] Calculated score: ${result.overallScore}/100 (from behavior ratings)`);
-  
   const emitMsg = (process.env.JUDGE_EMIT_MESSAGE ?? "true").toLowerCase() === "true";
-  if (process.env.DEBUG_JUDGE === "true") {
-    console.log("[judge] result");
-    console.dir(result, { depth: null });
-  }
   // Store judge result in state for collection
   if (!emitMsg) {
     return { messages: [] as BaseMessage[], judgeResult: result };
@@ -412,13 +380,14 @@ const app = new StateGraph(ConversationAnnotation)
   .addConditionalEdges(
     "salesperson",
     (state) => {
+      const messageCount = countTotalMessages(state.messages);
+      
       // If appointment is completed, end conversation and go to judge
       if (state.appointmentCompleted === true) {
-        console.log("[graph] Appointment completed - routing to judge");
         return "judge";
       }
       // If max messages reached, go to judge
-      if (countTotalMessages(state.messages) >= MAX_MESSAGES) {
+      if (messageCount >= MAX_MESSAGES) {
         return "judge";
       }
       // Otherwise continue conversation
@@ -431,13 +400,11 @@ const app = new StateGraph(ConversationAnnotation)
 
 // Wrap all methods to add recursion limit from environment variable
 const RECURSION_LIMIT = Number(process.env.RECURSION_LIMIT || 100);
-console.log(`[graph.ts] Setting recursion limit to: ${RECURSION_LIMIT} (from env: ${process.env.RECURSION_LIMIT || 'not set, using default 100'})`);
 
 // Wrap invoke
 const originalInvoke = app.invoke.bind(app);
 app.invoke = async (input: any, config?: any) => {
   const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
-  console.log(`[graph.ts] invoke called with recursionLimit: ${finalConfig.recursionLimit}`);
   return originalInvoke(input, finalConfig);
 };
 
@@ -445,7 +412,6 @@ app.invoke = async (input: any, config?: any) => {
 const originalStream = app.stream.bind(app);
 app.stream = function(input: any, config?: any) {
   const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
-  console.log(`[graph.ts] stream called with recursionLimit: ${finalConfig.recursionLimit}`);
   return originalStream(input, finalConfig);
 };
 
@@ -453,7 +419,6 @@ app.stream = function(input: any, config?: any) {
 const originalStreamEvents = app.streamEvents.bind(app);
 app.streamEvents = function(input: any, config?: any, streamOptions?: any): any {
   const finalConfig = { ...config, recursionLimit: config?.recursionLimit ?? RECURSION_LIMIT };
-  console.log(`[graph.ts] streamEvents called with recursionLimit: ${finalConfig.recursionLimit}`);
   return originalStreamEvents(input, finalConfig, streamOptions);
 };
 
