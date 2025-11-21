@@ -9,14 +9,13 @@ interface GenerateCustomerResponse {
   success: boolean;
   customerId: string;
   conversationId: string;
+  firstName: string;
+  lastName: string;
 }
 
 interface Persona {
   id: string;
-  name: string;
   description: string;
-  customerId?: string;
-  conversationId?: string;
 }
 
 /**
@@ -99,7 +98,7 @@ async function generateCustomerForPersona(
 
   const url = `${baseUrl}/customers/event`;
 
-  console.log(`[generateCustomer] Generating customer for persona: ${persona.name}`);
+  console.log(`[generateCustomer] Generating customer for persona: ${persona.id}`);
   console.log(`[generateCustomer] POST ${url}`);
   console.log(`[generateCustomer] Request body:`, JSON.stringify(requestBody, null, 2));
 
@@ -112,7 +111,11 @@ async function generateCustomerForPersona(
     console.log(`[generateCustomer] Customer ID: ${data.customerId}`);
     console.log(`[generateCustomer] Conversation ID: ${data.conversationId}`);
 
-    return data;
+    return {
+      ...data,
+      firstName,
+      lastName,
+    };
   } catch (error) {
     if (axios.isAxiosError(error)) {
       console.error(`[generateCustomer] ✗ Error:`, {
@@ -129,74 +132,45 @@ async function generateCustomerForPersona(
 }
 
 /**
- * Update personas.ts file with new customerId and conversationId
+ * Update personas.ts file with generated customer name for database tracking
  */
 function updatePersonasFile(
   filePath: string,
-  personaUpdates: Map<string, { customerId: string; conversationId: string }>
+  personaUpdates: Map<string, { firstName: string; lastName: string }>
 ): void {
   console.log(`[updatePersonas] Reading ${filePath}...`);
 
   let content = readFileSync(filePath, "utf-8");
 
-  // Update each persona's customerId and conversationId
+  // Update each persona's name field with generated customer name
   for (const [personaId, ids] of personaUpdates.entries()) {
     // Escape special regex characters in personaId
     const escapedPersonaId = personaId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const fullName = `${ids.firstName} ${ids.lastName}`;
 
-    // Pattern to find the persona object: id: "persona-id", ... { ... customerId: "...", conversationId: "..." }
-    // We'll look for the persona block and update both IDs
-    
-    // First, try to find and update existing customerId and conversationId
-    // Match: id: "persona-id" ... customerId: "old-id" ... conversationId: "old-conv-id"
-    // Capture groups: $1 = before customerId, $2 = customerId line, $3 = between, $4 = conversationId line
-    const personaBlockRegex = new RegExp(
-      `(id:\\s*"${escapedPersonaId}"[^}]*?)(customerId:\\s*"[^"]*",?\\s*)([^}]*?)(conversationId:\\s*"[^"]*",?)`,
+    // Try to find and update existing name field
+    // Match: id: "persona-id" ... name: "old-name" ...
+    const nameRegex = new RegExp(
+      `(id:\\s*"${escapedPersonaId}"[^}]*?name:\\s*")[^"]*(")`,
       "s"
     );
-
-    if (personaBlockRegex.test(content)) {
-      // Replace both customerId and conversationId, ensuring proper comma placement and newline
-      content = content.replace(
-        personaBlockRegex,
-        `$1customerId: "${ids.customerId}", \n    conversationId: "${ids.conversationId}",`
-      );
-      console.log(`[updatePersonas] Updated customerId and conversationId for ${personaId}`);
+    if (nameRegex.test(content)) {
+      content = content.replace(nameRegex, `$1${fullName}$2`);
+      console.log(`[updatePersonas] Updated name to "${fullName}" for ${personaId}`);
     } else {
-      // Try to find persona without customerId/conversationId and add them
+      // Add name field if it doesn't exist
       // Match: id: "persona-id" ... description: "..." }
-      const personaWithoutIdsRegex = new RegExp(
+      const personaWithoutNameRegex = new RegExp(
         `(id:\\s*"${escapedPersonaId}"[^}]*?description:\\s*"[^"]*")(,?)(\\s*)(\\n\\s*\\})`,
         "s"
       );
 
-      if (personaWithoutIdsRegex.test(content)) {
+      if (personaWithoutNameRegex.test(content)) {
         content = content.replace(
-          personaWithoutIdsRegex,
-          `$1,\n    customerId: "${ids.customerId}", \n    conversationId: "${ids.conversationId}",$4`
+          personaWithoutNameRegex,
+          `$1,\n    name: "${fullName}",$4`
         );
-        console.log(`[updatePersonas] Added customerId and conversationId for ${personaId}`);
-      } else {
-        // Try simpler approach: just find customerId and conversationId separately
-        // Match customerId with optional trailing comma
-        const customerIdOnlyRegex = new RegExp(
-          `(id:\\s*"${escapedPersonaId}"[^}]*?customerId:\\s*")[^"]*(")(,?\\s*)`,
-          "s"
-        );
-        // Match conversationId with optional trailing comma
-        const conversationIdOnlyRegex = new RegExp(
-          `(id:\\s*"${escapedPersonaId}"[^}]*?conversationId:\\s*")[^"]*(")(,?\\s*)`,
-          "s"
-        );
-
-        if (customerIdOnlyRegex.test(content)) {
-          content = content.replace(customerIdOnlyRegex, `$1${ids.customerId}$2, `);
-          console.log(`[updatePersonas] Updated customerId for ${personaId}`);
-        }
-        if (conversationIdOnlyRegex.test(content)) {
-          content = content.replace(conversationIdOnlyRegex, `$1${ids.conversationId}$2,`);
-          console.log(`[updatePersonas] Updated conversationId for ${personaId}`);
-        }
+        console.log(`[updatePersonas] Added name "${fullName}" for ${personaId}`);
       }
     }
   }
@@ -230,17 +204,16 @@ async function main() {
   // Extract personas from the file (simple regex-based extraction)
   // This is a simplified approach - in production you might want to use a TypeScript parser
   const personaMatches = personasContent.matchAll(
-    /id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*description:\s*"([^"]+)"/g
+    /id:\s*"([^"]+)",\s*description:\s*"([^"]+)"/g
   );
 
   const personas: Persona[] = [];
   for (const match of personaMatches) {
     const id = match[1];
-    const name = match[2];
-    const description = match[3];
+    const description = match[2];
     
     // Skip if any required fields are missing
-    if (!id || !name || !description) {
+    if (!id || !description) {
       continue;
     }
     
@@ -251,7 +224,7 @@ async function main() {
       personaIndex
     );
     if (!beforeMatch.includes("//")) {
-      personas.push({ id, name, description });
+      personas.push({ id, description });
     }
   }
 
@@ -263,7 +236,7 @@ async function main() {
 
   console.log(`[main] Found ${personas.length} persona(s) to process\n`);
 
-  const updates = new Map<string, { customerId: string; conversationId: string }>();
+  const updates = new Map<string, { customerId: string; conversationId: string; firstName: string; lastName: string }>();
 
   // Generate customer for each persona
   for (const persona of personas) {
@@ -272,12 +245,14 @@ async function main() {
       updates.set(persona.id, {
         customerId: result.customerId,
         conversationId: result.conversationId,
+        firstName: result.firstName,
+        lastName: result.lastName,
       });
 
       // Small delay between requests
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (error) {
-      console.error(`[main] ✗ Failed to generate customer for ${persona.name}:`, error);
+      console.error(`[main] ✗ Failed to generate customer for ${persona.id}:`, error);
       console.error(`[main] Continuing with other personas...\n`);
     }
   }
@@ -287,15 +262,26 @@ async function main() {
     process.exit(1);
   }
 
-  // Update personas.ts file
-  console.log(`\n[main] Updating personas.ts with ${updates.size} customer ID(s)...`);
-  updatePersonasFile(personasFilePath, updates);
+  // Update personas.ts with generated customer names for database tracking
+  console.log(`\n[main] Updating personas.ts with ${updates.size} customer name(s)...`);
+  
+  // Create a map with just firstName and lastName for name updates
+  const nameUpdates = new Map<string, { firstName: string; lastName: string }>();
+  for (const [personaId, ids] of updates.entries()) {
+    nameUpdates.set(personaId, {
+      firstName: ids.firstName,
+      lastName: ids.lastName,
+    });
+  }
+  
+  updatePersonasFile(personasFilePath, nameUpdates);
 
   console.log("\n" + "=".repeat(70));
   console.log("COMPLETE");
   console.log("=".repeat(70));
   console.log(`Successfully generated ${updates.size} customer(s)`);
-  console.log("personas.ts has been updated with new customerId and conversationId");
+  console.log("Customer names have been updated in personas.ts for database tracking");
+  console.log("Customer IDs and conversation IDs are provided by the backend API");
   console.log("=".repeat(70) + "\n");
 }
 
@@ -309,15 +295,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
 /**
  * Generate fresh customers for multiple personas
- * Returns a map of persona ID to customer/conversation IDs
+ * Returns a map of persona ID to customer/conversation IDs and names
  */
 export async function generateFreshCustomersForPersonas(
   personas: Persona[],
   dealerId: number,
   baseUrl: string,
   iteration?: number
-): Promise<Map<string, { customerId: string; conversationId: string }>> {
-  const customerMap = new Map<string, { customerId: string; conversationId: string }>();
+): Promise<Map<string, { customerId: string; conversationId: string; firstName: string; lastName: string }>> {
+  const customerMap = new Map<string, { customerId: string; conversationId: string; firstName: string; lastName: string }>();
   
   for (const persona of personas) {
     try {
@@ -326,12 +312,14 @@ export async function generateFreshCustomersForPersonas(
       customerMap.set(persona.id, {
         customerId: result.customerId,
         conversationId: result.conversationId,
+        firstName: result.firstName,
+        lastName: result.lastName,
       });
       
       // Small delay between requests
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (error) {
-      console.error(`[generateFreshCustomersForPersonas] ✗ Failed to generate customer for ${persona.name}:`, error);
+      console.error(`[generateFreshCustomersForPersonas] ✗ Failed to generate customer for ${persona.id}:`, error);
       // Continue with other personas
     }
   }

@@ -25,6 +25,7 @@ const CRITERION_MAX_POINTS: Record<string, number> = {
 // Re-define ConversationResult here to avoid circular dependency
 export interface ConversationResult {
   persona: Persona;
+  customerName?: string; // Actual customer name (firstName + lastName) from generated customer
   timestamp: string;
   judgeResult: JudgeOutput | null;
   transcript: Array<{ role: string; content: string }>;
@@ -74,7 +75,7 @@ export interface OptimizationResult {
 async function evaluatePrompt(
   prompt: string,
   config: OptimizationConfig,
-  freshCustomers?: Map<string, { customerId: string; conversationId: string }>
+  freshCustomers?: Map<string, { customerId: string; conversationId: string; firstName: string; lastName: string }>
 ): Promise<{
   averageScore: number;
   scoresByPersona: Record<string, number>;
@@ -97,7 +98,7 @@ async function evaluatePrompt(
   
   // Run simulation for each persona
   for (const persona of personasToTest) {
-    console.log(`[axOptimizer] Testing persona: ${persona.name}`);
+    console.log(`[axOptimizer] Testing persona: ${persona.id}`);
     
     // Set persona
     process.env.CUSTOMER_PERSONA = persona.description;
@@ -105,26 +106,22 @@ async function evaluatePrompt(
     // Use fresh customer/conversation IDs if provided, otherwise fall back to persona defaults
     let customerId: string;
     let conversationId: string;
+    let customerName: string | undefined;
     
     if (freshCustomers && freshCustomers.has(persona.id)) {
       const freshIds = freshCustomers.get(persona.id)!;
       customerId = freshIds.customerId;
       conversationId = freshIds.conversationId;
+      customerName = `${freshIds.firstName} ${freshIds.lastName}`;
       console.log(`[axOptimizer] Using fresh customer ID: ${customerId}`);
       console.log(`[axOptimizer] Using fresh conversation ID: ${conversationId}`);
+      console.log(`[axOptimizer] Customer name: ${customerName}`);
     } else {
-      // Fallback to persona defaults (for backward compatibility)
-      if (!persona.customerId) {
-        throw new Error(
-          `Persona "${persona.name}" (${persona.id}) is missing required customerId. ` +
-          `Please provide customerId in personas.ts or generate fresh customers.`
-        );
-      }
-      customerId = persona.customerId;
-      // Generate a fresh conversationId if no fresh customers provided
-      conversationId = `conv_${customerId}_${Date.now()}`;
-      console.log(`[axOptimizer] Customer ID: ${customerId} (from persona)`);
-      console.log(`[axOptimizer] Conversation ID: ${conversationId} (generated fresh for this test)`);
+      // This should never happen during Ax optimization since fresh customers are always generated
+      throw new Error(
+        `Fresh customers must be provided for persona "${persona.id}". ` +
+        `Customer generation is required for all evaluations.`
+      );
     }
     
     process.env.CUSTOMER_ID = customerId;
@@ -140,6 +137,7 @@ async function evaluatePrompt(
     if (judgeResult) {
       results.push({
         persona,
+        customerName,
         timestamp: new Date().toISOString(),
         judgeResult,
         transcript,
@@ -244,7 +242,7 @@ export async function optimizeBdcPrompt(
   
         // Extract judge results for each persona
         const initialJudgeResults = initialEval.results.map(r => ({
-          persona: r.persona.name,
+          persona: r.customerName || r.persona.id,
           overallScore: r.judgeResult?.overallScore || 0,
           employee: r.judgeResult?.employee ? {
             score: r.judgeResult.employee.score,
@@ -326,7 +324,7 @@ export async function optimizeBdcPrompt(
     
           // Extract judge results for each persona
           const candidateJudgeResults = evalResult.results.map(r => ({
-            persona: r.persona.name,
+            persona: r.customerName || r.persona.id,
             overallScore: r.judgeResult?.overallScore || 0,
             employee: r.judgeResult?.employee ? {
               score: r.judgeResult.employee.score,
@@ -420,7 +418,7 @@ function generateFeedback(iteration: {
     .filter(([_, score]) => score < 80)
     .map(([personaId, score]) => {
       const persona = personas.find(p => p.id === personaId);
-      return `${persona?.name || personaId} (${score.toFixed(1)}/100)`;
+      return `${personaId} (${score.toFixed(1)}/100)`;
     });
   
   if (lowScoringPersonas.length > 0) {

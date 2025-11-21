@@ -58,12 +58,6 @@ export function createAutomotiveApiNode(baseUrl: string): Runnable<Request, Auto
         timeout: 30000,
       });
       
-      // Always log the full response payload for debugging
-      if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
-        console.log("[automotiveApi] RESPONSE");
-        console.dir(data, { depth: null });
-      }
-      
       // Log key fields that might indicate appointment confirmation
       const response = data as AutomotiveApiResponse;
       console.log("[automotiveApi] Response Summary:", {

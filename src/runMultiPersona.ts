@@ -48,22 +48,22 @@ function formatTranscript(messages: BaseMessage[]): Array<{ role: string; conten
 
 async function runConversationWithPersona(persona: Persona): Promise<ConversationResult> {
   console.log(`\n${"=".repeat(60)}`);
-  console.log(`Starting conversation with persona: ${persona.name}`);
+  console.log(`Starting conversation with persona: ${persona.id}`);
   console.log(`Description: ${persona.description}`);
   console.log(`${"=".repeat(60)}\n`);
 
   // Set the persona as environment variable
   process.env.CUSTOMER_PERSONA = persona.description;
 
-  // Use predefined customer ID and conversation ID from persona, or generate unique ones
-  const customerId = persona.customerId || `customer-${persona.id}-${Date.now()}`;
-  const conversationId = persona.conversationId || `conv-${persona.id}-${Date.now()}`;
+  // Generate unique customer and conversation IDs for this run
+  const customerId = `customer-${persona.id}-${Date.now()}`;
+  const conversationId = `conv-${persona.id}-${Date.now()}`;
   
   process.env.CUSTOMER_ID = customerId;
   process.env.CONVERSATION_ID = conversationId;
   
-  console.log(`Customer ID: ${customerId}${persona.customerId ? ' (predefined)' : ' (generated)'}`);
-  console.log(`Conversation ID: ${conversationId}${persona.conversationId ? ' (predefined)' : ' (generated)'}`);
+  console.log(`Customer ID: ${customerId} (generated)`);
+  console.log(`Conversation ID: ${conversationId} (generated)`);
 
   // Run the conversation graph
   const finalState = await app.invoke({ messages: [] });
@@ -86,7 +86,7 @@ async function runConversationWithPersona(persona: Persona): Promise<Conversatio
   const appointmentCompleted = finalState.appointmentCompleted || false;
 
   console.log(`\n${"-".repeat(60)}`);
-  console.log(`Conversation completed for ${persona.name}`);
+  console.log(`Conversation completed for ${persona.id}`);
   console.log(`Messages: ${messageCount}`);
   console.log(`Appointment completed: ${appointmentCompleted}`);
   if (judgeResult) {
@@ -186,7 +186,7 @@ async function saveResults(results: ConversationResult[], summary: AggregatedRep
   console.log(`\nScores by Persona:`);
   Object.entries(summary.scoresByPersona).forEach(([personaId, score]) => {
     const persona = personas.find((p) => p.id === personaId);
-    console.log(`  ${persona?.name || personaId}: ${score.toFixed(2)}/100`);
+    console.log(`  ${personaId}: ${score.toFixed(2)}/100`);
   });
   console.log(`\nTop 5 Worst Behaviors (Highest Average Deductions):`);
   summary.worstBehaviors.forEach((behavior, index) => {
@@ -206,7 +206,7 @@ async function main() {
     const persona = personas[i];
     if (!persona) continue; // Skip if undefined (shouldn't happen, but TypeScript safety)
     
-    console.log(`\n[${i + 1}/${personas.length}] Processing persona: ${persona.name}`);
+    console.log(`\n[${i + 1}/${personas.length}] Processing persona: ${persona.id}`);
 
     try {
       const result = await runConversationWithPersona(persona);
@@ -219,7 +219,7 @@ async function main() {
       }
     } catch (error) {
       console.error(`\n${"=".repeat(60)}`);
-      console.error(`ERROR running conversation for persona: ${persona.name}`);
+      console.error(`ERROR running conversation for persona: ${persona.id}`);
       console.error(`Persona ID: ${persona.id}`);
       console.error(`Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
       console.error(`Error message: ${error instanceof Error ? error.message : String(error)}`);

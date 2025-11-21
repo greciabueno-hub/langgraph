@@ -3,34 +3,23 @@
 
 export interface Persona {
   id: string;
-  name: string;
   description: string;
-  customerId?: string; // Pre-existing customer ID from your backend
-  conversationId?: string; // Pre-existing conversation ID from your backend
+  name?: string; // Generated customer name (firstName + lastName) for database tracking
 }
 
 export const personas: Persona[] = [
   {
     id: "budget-conscious",
-    name: "Sarah Martinez",
     description: "Very price-sensitive, needs to stay within strict budget constraints. Asks about financing options and wants to see the best value. May be hesitant about additional features that add cost.",
-    customerId: "3f694e55-9941-4550-9129-a5bbdee002c6", 
-    conversationId: "conv_3f694e55-9941-4550-9129-a5bbdee002c6_1763574751246",
-  }
-  // {
-  //   id: "urgent-buyer",
-  //   name: "Michael Chen",
-  //   description: "Needs a car this week for a new job starting Monday. Expresses urgency and time pressure. Wants to move quickly through the process. May be willing to pay slightly more for immediate availability. Shows stress and needs reassurance.",
-  //   customerId: "372c46ca-bada-4ac2-be42-87ec025ef05c", 
-  //   conversationId: "conv_372c46ca-bada-4ac2-be42-87ec025ef05c_1763574754767",
-  // },
-  // {
-  //   id: "first-time-buyer",
-  //   name: "Emily Johnson",
-  //   description: "First-time car buyer, uncertain about needs and preferences. Asks many questions, needs guidance and education. Doesn't know much about cars, financing, or the buying process. May be overwhelmed and needs patience. Looking for a reliable, safe vehicle for daily commuting.",
-  //   customerId: "365491a3-efa3-445d-82f2-a642ba22acac", 
-  //   conversationId: "conv_365491a3-efa3-445d-82f2-a642ba22acac_1763574757258",
-  // },
+  },
+  {
+    id: "urgent-buyer",
+    description: "Needs a car this week for a new job starting Monday. Expresses urgency and time pressure. Wants to move quickly through the process. May be willing to pay slightly more for immediate availability. Shows stress and needs reassurance."
+  },
+  {
+    id: "first-time-buyer",
+    description: "First-time car buyer, uncertain about needs and preferences. Asks many questions, needs guidance and education. Doesn't know much about cars, financing, or the buying process. May be overwhelmed and needs patience. Looking for a reliable, safe vehicle for daily commuting.",
+  },
   // {
   //   id: "luxury-buyer",
   //   name: "David Thompson",

@@ -183,15 +183,12 @@ async function main() {
       const judgeFilename = `judge-evaluations-${timestamp}.json`;
       const judgeFilepath = join(resultsDir, judgeFilename);
       
-      // Extract all judge results with detailed breakdown
+      // Extract all judge results with detailed breakdown (excluding prompts)
       const judgeEvaluations = {
         timestamp: result.timestamp,
-        initialPrompt: result.initialPrompt,
-        bestPrompt: result.optimizationResult.bestPrompt,
         bestScore: result.optimizationResult.bestScore,
         iterations: result.optimizationResult.iterations.map(iter => ({
           iteration: iter.iteration,
-          prompt: iter.prompt,
           averageScore: iter.score,
           scoresByPersona: iter.scoresByPersona,
           judgeEvaluations: iter.judgeResults?.map(judge => ({

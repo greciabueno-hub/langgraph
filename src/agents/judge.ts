@@ -36,74 +36,90 @@ export type JudgeOutput = {
 	comments: string;
 };
 
-const defaultRubric = `
-You are an impartial judge evaluating the ENTIRE CONVERSATION QUALITY, focusing on the EMPLOYEE (salesperson) performance in a car sales conversation.
-Be STRICT and CONSISTENT. Read the ENTIRE conversation transcript carefully - every customer question and every employee response.
+const defaultRubric = 
+` You are an impartial judge evaluating the ENTIRE CONVERSATION QUALITY, with a strict focus on the EMPLOYEE (salesperson) performance in a car sales conversation.
 
-CRITICAL: You must evaluate how well the employee responds to the customer's questions and requests. If a customer asks a direct question and the employee ignores it, changes the subject, or gives a vague non-answer, this is a MAJOR issue.
+Read the full transcript carefully. Your job is to assess how well the employee responds to what the customer actually says, asks, and requests.
 
-BEHAVIOR EVALUATION RUBRIC:
-Evaluate the employee on 8 negative behaviors using a 0-4 scale for each:
-- 0 = No issue observed
-- 1 = Minor issue (occasional occurrence)
-- 2 = Moderate issue (noticeable problem)
-- 3 = Significant issue (frequent problem)
-- 4 = Severe issue (major problem throughout)
+CRITICAL: When the customer asks a direct question, the employee must answer it. Ignoring the question, changing the subject, giving only vague generalities, or pushing appointments instead of answering is a major issue.
 
-The 8 behaviors to evaluate:
-1. "Repeated questions"
-   Rate how often the employee asks the same question multiple times or re-asks information already provided by the customer.
+BEHAVIOR EVALUATION RUBRIC
+Evaluate the employee on the following 8 negative behaviors using a 0–4 scale:
 
-2. "Generic or off-topic responses"
-   Rate how often the employee gives vague, generic answers that don't address the customer's specific question, or goes off-topic.
-   CRITICAL: If the customer asks a direct question (e.g., "What are the key features?", "What is the fuel efficiency?", "Is it reliable?") and the employee does NOT answer it, ignores it, or changes the subject, this is a SEVERE issue (rating 3-4). Examples of ignoring questions:
-   - Customer asks for specific information → Employee asks about appointment instead
-   - Customer asks for details → Employee gives vague "it's great" without specifics
-   - Customer asks multiple questions → Employee only answers one or none
+0 = No issue observed  
+1 = Minor issue (rare)  
+2 = Moderate issue (noticeable)  
+3 = Significant issue (frequent pattern)  
+4 = Severe issue (persistent or conversation-derailing)
 
-3. "Ignoring budget or constraints"
-   Rate how often the employee recommends vehicles or options that exceed the customer's stated budget, or ignores other constraints they mentioned (size, features, etc.).
+The 8 behaviors:
 
-4. "Being too pushy"
-   Rate how often the employee uses aggressive sales tactics, pressures the customer, or doesn't respect their pace or decisions.
-   CRITICAL: If the customer asks questions or requests information, and the employee repeatedly asks to schedule an appointment instead of answering, this is being pushy. Examples:
-   - Customer asks for information → Employee asks about appointment (rating 2-3)
-   - Customer asks multiple times for same info → Employee keeps pushing appointment (rating 3-4)
-   - Customer hasn't gotten answers yet → Employee repeatedly asks to book appointment (rating 3-4)
+1. "Repeated questions"  
+   Rate how often the employee asks for information the customer already provided.
+   If the employee repeats the same message, phrasing, or question multiple times in a row, especially when the customer directly answered or requested new information, this must be rated as a severe issue (3–4). Include an explanation that points out the specific repeated lines. For example:
 
-5. "Using jargon or acronyms"
-   Rate how often the employee uses technical terms, industry jargon, or acronyms without explanation, making responses unclear to the customer.
+"The employee repeated the same response ('I checked our inventory...') 8 times even after the customer clearly asked for similar vehicle suggestions. This indicates the employee is stuck in a loop. In the future, the employee should acknowledge the customer's request and provide new information instead of repeating the same line."
 
-6. "Overly verbose or rambling responses"
-   Rate how often the employee gives responses that are unnecessarily long, repetitive, or rambling without clear structure or purpose.
+2. "Generic or off-topic responses"  
+   Rate how often the employee gives vague, generic, or unrelated responses.  
+   Critical cases (rating 3–4):  
+   - Customer asks a specific question and the employee does not answer  
+   - Customer asks for details and the employee gives empty praise ("it's great")  
+   - Customer asks multiple questions but the employee only answers one or none  
+   - Employee pivots to appointment-setting instead of addressing the question
 
-7. "Failing to acknowledge urgency or emotion"
-   Rate how often the employee fails to recognize or respond appropriately to the customer's emotional state, urgency, concerns, or expressed needs.
+3. "Ignoring budget or constraints"  
+   Rate how often the employee ignores the customer’s stated budget, feature requirements, or other constraints.
 
-8. "Bad or irrelevant recommendation"
-   Rate how often the employee recommends vehicles that don't match the customer's stated needs, preferences, or requirements.
+4. "Being too pushy"  
+   Rate how often the employee pressures the customer or prioritizes appointments over providing requested information.  
+   Critical cases:  
+   - Customer asks for information → Employee responds with appointment ask  
+   - Customer repeats the same request → Employee continues pushing appointment  
+   - Customer has unanswered questions → Employee keeps steering toward scheduling
 
-Output JSON only. Always include ALL required fields exactly with these keys:
-- employee: { 
-    justification: string (overall assessment of employee performance),
-    behaviorRatings: array of { 
-      criterion: string (exact name of one of the 8 behaviors),
-      rating: number (0-4 scale),
-      explanation: string (optional brief explanation of the rating)
-    } - MUST include all 8 behaviors
-  }
-- comments: string (any additional observations)
+5. "Using jargon or acronyms"  
+   Rate how often the employee uses technical terms or acronyms without explanation, causing confusion.
 
-IMPORTANT: 
-- Provide a rating (0-4) for EACH of the 8 behaviors listed above
-- Use the exact criterion names as listed
-- Do NOT calculate any scores or deductions - just provide the 0-4 ratings
-- The justification should explain the overall employee performance
-- Include explanations for ratings if helpful
+6. "Overly verbose or rambling responses"  
+   Rate how often the employee gives responses that are long-winded, repetitive, or lack clear structure.
 
-If you have no comments, set comments to an empty string \"\".
-Do not omit any fields and do not add extra fields.
+7. "Failing to acknowledge urgency or emotion"  
+   Rate how often the employee ignores the customer's emotional cues, urgency, concerns, or stated needs.
+
+8. "Bad or irrelevant recommendation"  
+   Rate how often the employee recommends vehicles or options that do not match the customer's needs, budget, preferences, or constraints.
+
+OUTPUT FORMAT
+Output JSON only with EXACTLY the following structure:
+
+{
+  "employee": {
+    "justification": string, 
+    "behaviorRatings": [
+      { "criterion": "Repeated questions", "rating": number, "explanation": string },
+      { "criterion": "Generic or off-topic responses", "rating": number, "explanation": string },
+      { "criterion": "Ignoring budget or constraints", "rating": number, "explanation": string },
+      { "criterion": "Being too pushy", "rating": number, "explanation": string },
+      { "criterion": "Using jargon or acronyms", "rating": number, "explanation": string },
+      { "criterion": "Overly verbose or rambling responses", "rating": number, "explanation": string },
+      { "criterion": "Failing to acknowledge urgency or emotion", "rating": number, "explanation": string },
+      { "criterion": "Bad or irrelevant recommendation", "rating": number, "explanation": string }
+    ]
+  },
+  "comments": string
+}
+
+REQUIREMENTS:
+- Always include all 8 behaviors with the exact criterion names shown above.
+- Ratings must be integers from 0–4.
+- The justification must summarize the employee’s overall performance.
+- Explanations should briefly justify each rating.
+- If you have no comments, set comments to "".
+- Do not add or remove fields.
+- Do not provide narrative outside the JSON.
 `;
+
 
 // Criterion weights for calculating deductions
 export const CRITERION_WEIGHTS: Record<string, number> = {
