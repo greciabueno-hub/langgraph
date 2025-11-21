@@ -9,6 +9,7 @@ import { generateFreshCustomersForPersonas } from "../utils/generatePersonaCusto
 import { type JudgeOutput } from "../agents/judge.js";
 import type { BaseMessage } from "@langchain/core/messages";
 import "dotenv/config";
+import { saveConversationResult } from "../utils/saveConversationResult.js";
 
 // Mapping of criterion names to their maximum possible deduction points
 const CRITERION_MAX_POINTS: Record<string, number> = {
@@ -50,7 +51,8 @@ export interface OptimizationResult {
     score: number;
     scoresByPersona: Record<string, number>;
     judgeResults?: Array<{
-      persona: string;
+      persona: string; // Customer name or persona ID
+      personaId: string; // Persona ID (e.g., "budget-conscious")
       overallScore: number;
       employee: {
         score: number;
@@ -133,17 +135,39 @@ async function evaluatePrompt(
     // Extract judge result
     const judgeResult = finalState.judgeResult;
     const transcript = formatTranscript(finalState.messages || []);
+    const timestamp = new Date().toISOString();
+    const messageCount = transcript.length;
+    const appointmentCompleted = finalState.appointmentCompleted || false;
     
     if (judgeResult) {
       results.push({
         persona,
         customerName,
-        timestamp: new Date().toISOString(),
+        timestamp,
         judgeResult,
         transcript,
-        messageCount: transcript.length,
-        appointmentCompleted: finalState.appointmentCompleted || false,
+        messageCount,
+        appointmentCompleted,
       });
+
+      // Save individual conversation result
+      try {
+        const conversationData: Parameters<typeof saveConversationResult>[0] = {
+          persona,
+          customerId,
+          conversationId,
+          timestamp,
+          judgeResult,
+          transcript,
+          messageCount,
+          appointmentCompleted,
+          ...(customerName && { customerName }),
+        };
+        const filepath = await saveConversationResult(conversationData);
+        console.log(`[axOptimizer] Conversation result saved: ${filepath}`);
+      } catch (error) {
+        console.warn("[axOptimizer] Failed to save conversation result:", error);
+      }
     }
     
     // Small delay to avoid rate limiting
@@ -243,6 +267,7 @@ export async function optimizeBdcPrompt(
         // Extract judge results for each persona
         const initialJudgeResults = initialEval.results.map(r => ({
           persona: r.customerName || r.persona.id,
+          personaId: r.persona.id, // Always include persona ID
           overallScore: r.judgeResult?.overallScore || 0,
           employee: r.judgeResult?.employee ? {
             score: r.judgeResult.employee.score,
@@ -272,6 +297,7 @@ export async function optimizeBdcPrompt(
   
   console.log(`[axOptimizer] Initial score: ${bestScore.toFixed(2)}/100\n`);
   
+  ///////////////////////////////////////// FOR LOOP FOR EACH ITERATION /////////////////////////////////////////
   // Optimization loop
   for (let i = 1; i <= maxIterations; i++) {
     console.log(`\n[axOptimizer] Iteration ${i}/${maxIterations}`);
@@ -325,6 +351,7 @@ export async function optimizeBdcPrompt(
           // Extract judge results for each persona
           const candidateJudgeResults = evalResult.results.map(r => ({
             persona: r.customerName || r.persona.id,
+            personaId: r.persona.id, // Always include persona ID
             overallScore: r.judgeResult?.overallScore || 0,
             employee: r.judgeResult?.employee ? {
               score: r.judgeResult.employee.score,
@@ -400,29 +427,86 @@ export async function optimizeBdcPrompt(
 function generateFeedback(iteration: {
   score: number;
   scoresByPersona: Record<string, number>;
+  judgeResults?: Array<{
+    persona: string;
+    personaId: string;
+    overallScore: number;
+    employee: {
+      score: number;
+      justification: string;
+      subscores: Array<{ 
+        criterion: string; 
+        pointsDeducted: number; 
+        maxPoints: number;
+      }>;
+    };
+    comments: string;
+  }>;
 }): string {
   const feedback: string[] = [];
 
+  // CRITICAL: Placeholder preservation note
   feedback.push("CRITICAL: The prompt contains template placeholders in the format {{PLACEHOLDER_NAME}} (e.g., {{PERSONALITY_SECTION}}, {{GOALS_SECTION}}, etc.). You MUST preserve ALL placeholders exactly as they appear. Do NOT remove, modify, or change any placeholders. Only optimize the text content BETWEEN placeholders, not the placeholders themselves.");
   
-  if (iteration.score < 70) {
-    feedback.push("The prompt needs significant improvement. Focus on being more helpful and responsive to customer needs.");
-  } else if (iteration.score < 85) {
-    feedback.push("The prompt is decent but could be more effective. Improve clarity and customer engagement.");
-  } else {
-    feedback.push("The prompt is performing well. Fine-tune for consistency across different customer types.");
-  }
+  // Overall Performance
+  feedback.push(`\nOverall Performance: ${iteration.score.toFixed(1)}/100`);
   
-  // Add persona-specific feedback
-  const lowScoringPersonas = Object.entries(iteration.scoresByPersona)
-    .filter(([_, score]) => score < 80)
-    .map(([personaId, score]) => {
-      const persona = personas.find(p => p.id === personaId);
-      return `${personaId} (${score.toFixed(1)}/100)`;
+  // CRITICAL ISSUES - Worst Performing Personas
+  if (iteration.judgeResults && iteration.judgeResults.length > 0) {
+    // Sort by score (lowest first) to get worst performers
+    const sortedResults = [...iteration.judgeResults].sort((a, b) => 
+      a.overallScore - b.overallScore
+    );
+    
+    // Get bottom 3 personas (or all if less than 3)
+    const worstPerformers = sortedResults.slice(0, Math.min(3, sortedResults.length));
+    
+    if (worstPerformers.length > 0) {
+      feedback.push("\nCRITICAL ISSUES - WORST PERFORMING PERSONAS:");
+      
+      worstPerformers.forEach((result, index) => {
+        const personaName = result.persona;
+        const personaId = result.personaId;
+        const score = result.overallScore;
+        const justification = result.employee.justification;
+        
+        feedback.push(`\n${index + 1}. ${personaName} (ID: ${personaId}, Score: ${score}/100):`);
+        feedback.push(`${justification}`);
+      });
+    }
+    
+    // ALL PERSONA EVALUATIONS
+    feedback.push("\nALL PERSONA EVALUATIONS:");
+    
+    iteration.judgeResults.forEach((result, index) => {
+      const personaName = result.persona;
+      const personaId = result.personaId;
+      const justification = result.employee.justification;
+      
+      feedback.push(`\n- Persona ${index + 1} - ${personaName} (ID: ${personaId}):`);
+      feedback.push(`${justification}`);
     });
-  
-  if (lowScoringPersonas.length > 0) {
-    feedback.push(`Lower scores observed for: ${lowScoringPersonas.join(", ")}. Consider adapting the prompt for these customer types.`);
+  } else {
+    // Fallback to old behavior if judgeResults not available
+    if (iteration.score < 70) {
+      feedback.push("\nThe prompt needs significant improvement. Focus on being more helpful and responsive to customer needs.");
+    } else if (iteration.score < 85) {
+      feedback.push("\nThe prompt is decent but could be more effective. Improve clarity and customer engagement.");
+    } else {
+      feedback.push("\nThe prompt is performing well. Fine-tune for consistency across different customer types.");
+    }
+    
+    // Add persona-specific feedback
+    const lowScoringPersonas = Object.entries(iteration.scoresByPersona)
+      .filter(([_, score]) => score < 80)
+      .map(([personaId, score]) => {
+        const persona = personas.find(p => p.id === personaId);
+        return `${personaId} (${score.toFixed(1)}/100)`;
+      });
+    
+    if (lowScoringPersonas.length > 0) {
+      feedback.push(`\nLower scores observed for: ${lowScoringPersonas.join(", ")}. Consider adapting the prompt for these customer types.`);
+    }
   }
   
   return feedback.join(" ");

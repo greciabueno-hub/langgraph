@@ -47,11 +47,11 @@ export function createAutomotiveApiNode(baseUrl: string): Runnable<Request, Auto
       }
     );
     
-    if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
-      // Safe, structured log of outbound request
-      console.log("[automotiveApi] POST", url);
-      console.dir(req, { depth: null });
-    }
+    // Logging removed - use DEBUG_AUTOMOTIVE_API for detailed debugging if needed
+    // if (process.env.DEBUG_AUTOMOTIVE_API === "true") {
+    //   console.log("[automotiveApi] POST", url);
+    //   console.dir(req, { depth: null });
+    // }
     
     try {
       const { data, status } = await axios.post(url, req, {
@@ -60,14 +60,14 @@ export function createAutomotiveApiNode(baseUrl: string): Runnable<Request, Auto
       
       // Log key fields that might indicate appointment confirmation
       const response = data as AutomotiveApiResponse;
-      console.log("[automotiveApi] Response Summary:", {
-        success: response.success,
-        workflowType: response.workflowType,
-        completed: response.completed,
-        nextAction: response.nextAction,
-        messageCount: Array.isArray(response.messages) ? response.messages.length : 0,
-        hasResponse: typeof (response as any)?.response === "string",
-      });
+      // console.log("[automotiveApi] Response Summary:", {
+      //   success: response.success,
+      //   workflowType: response.workflowType,
+      //   completed: response.completed,
+      //   nextAction: response.nextAction,
+      //   messageCount: Array.isArray(response.messages) ? response.messages.length : 0,
+      //   hasResponse: typeof (response as any)?.response === "string",
+      // });
       
       // Log response to conversation logger
       const logResponse: ConversationLogEntry["response"] = {

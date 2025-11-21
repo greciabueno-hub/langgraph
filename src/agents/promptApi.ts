@@ -42,19 +42,32 @@ export async function getCurrentPrompt(baseUrl: string): Promise<PromptTemplateW
   try {
     const { data } = await axios.get<any>(url, { timeout: 30000 });
     
-    // Backend returns an array with one object: [{ id, promptContent, ... }]
-    // Extract the first element if it's an array, otherwise use data directly
-    const promptData = Array.isArray(data) ? data[0] : data;
+    // Backend returns an array of all prompts: [{ id, version, promptTemplate, ... }, ...]
+    // Find the prompt with the highest version number (latest version)
+    let promptData: any;
+    
+    if (Array.isArray(data)) {
+      if (data.length === 0) {
+        throw new Error(`Backend returned empty array. No prompts found.`);
+      }
+      
+      // Find the prompt with the highest version number
+      promptData = data.reduce((latest, current) => {
+        const currentVersion = current.version || 0;
+        const latestVersion = latest.version || 0;
+        return currentVersion > latestVersion ? current : latest;
+      });
+      
+      console.log(`[promptApi] Found ${data.length} prompt(s), using version ${promptData.version} (latest)`);
+    } else {
+      // If not an array, use data directly
+      promptData = data;
+    }
     
     if (!promptData) {
       throw new Error(`Backend returned empty response. Response structure: ${JSON.stringify(data, null, 2)}`);
     }
     
-    // Always log the raw response so we can see the actual structure
-    if (process.env.DEBUG_PROMPT_API === "true") {
-      console.log("[promptApi] Raw response from backend:", JSON.stringify(data, null, 2));
-      console.log("[promptApi] Extracted prompt data:", JSON.stringify(promptData, null, 2));
-    }
     
     // Map backend response to expected structure
     const result: PromptTemplateWithMetadata = {

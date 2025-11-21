@@ -8,6 +8,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import type { JudgeOutput } from "./agents/judge.js";
 import type { BaseMessage } from "@langchain/core/messages";
+import { saveConversationResult } from "./utils/saveConversationResult.js";
 
 interface ConversationResult {
   persona: Persona;
@@ -94,14 +95,36 @@ async function runConversationWithPersona(persona: Persona): Promise<Conversatio
   }
   console.log(`${"-".repeat(60)}\n`);
 
-  return {
+  const timestamp = new Date().toISOString();
+  const result = {
     persona,
-    timestamp: new Date().toISOString(),
+    timestamp,
     judgeResult,
     transcript,
     messageCount,
     appointmentCompleted,
   };
+
+  // Save individual conversation result
+  try {
+    const conversationData: Parameters<typeof saveConversationResult>[0] = {
+      persona,
+      customerId,
+      conversationId,
+      timestamp,
+      judgeResult,
+      transcript,
+      messageCount,
+      appointmentCompleted,
+      ...(persona.name && { customerName: persona.name }),
+    };
+    const filepath = await saveConversationResult(conversationData);
+    console.log(`[runMultiPersona] Conversation result saved: ${filepath}`);
+  } catch (error) {
+    console.warn("[runMultiPersona] Failed to save conversation result:", error);
+  }
+
+  return result;
 }
 
 function calculateAggregatedSummary(results: ConversationResult[]): AggregatedReport["summary"] {
