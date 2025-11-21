@@ -310,6 +310,13 @@ export async function optimizeBdcPrompt(
     }
     const feedback = generateFeedback(lastIteration);
     
+    // Log the feedback being passed to Ax in a readable format
+    console.log("\n" + "=".repeat(80));
+    console.log("FEEDBACK BEING PASSED TO AX FOR PROMPT OPTIMIZATION");
+    console.log("=".repeat(80));
+    console.log(feedback);
+    console.log("=".repeat(80) + "\n");
+    
     // Use Ax to optimize the prompt
     console.log("[axOptimizer] Generating optimized prompt...");
     const optimizationResult = await promptOptimizer.forward(llm, {
@@ -438,6 +445,8 @@ function generateFeedback(iteration: {
         criterion: string; 
         pointsDeducted: number; 
         maxPoints: number;
+        rating?: number; // 0-4 rating from LLM
+        explanation?: string; // Optional explanation from LLM
       }>;
     };
     comments: string;
@@ -450,6 +459,187 @@ function generateFeedback(iteration: {
   
   // Overall Performance
   feedback.push(`\nOverall Performance: ${iteration.score.toFixed(1)}/100`);
+  
+  // TOP ISSUES REQUIRING FIXES - Aggregated from subscores
+  if (iteration.judgeResults && iteration.judgeResults.length > 0) {
+    // Criterion to suggestion mapping
+    const criterionSuggestions: Record<string, { suggestion: string; rule: string }> = {
+      "Repeated questions": {
+        suggestion: "Add explicit instruction to avoid repeating the same response.",
+        rule: "If you've already said something, acknowledge the customer's new request and provide new information instead of repeating."
+      },
+      "Generic or off-topic responses": {
+        suggestion: "Prioritize answering direct questions before pivoting.",
+        rule: "When a customer asks a specific question, answer it directly before moving to other topics or appointment-setting."
+      },
+      "Ignoring budget or constraints": {
+        suggestion: "Always acknowledge and respect stated budget constraints.",
+        rule: "When a customer states a budget, acknowledge it explicitly and only recommend vehicles within that budget range."
+      },
+      "Being too pushy": {
+        suggestion: "Answer customer questions before suggesting appointments.",
+        rule: "Do not push for appointments until you have answered all of the customer's questions and provided requested information."
+      },
+      "Using jargon or acronyms": {
+        suggestion: "Explain technical terms when used.",
+        rule: "If you must use technical terms or acronyms, always provide a brief explanation in plain language."
+      },
+      "Overly verbose or rambling responses": {
+        suggestion: "Keep responses concise and focused.",
+        rule: "Provide clear, structured responses. Avoid unnecessary repetition or lengthy explanations that don't directly address the customer's question."
+      },
+      "Failing to acknowledge urgency or emotion": {
+        suggestion: "Acknowledge customer emotions and urgency cues.",
+        rule: "When a customer expresses urgency, stress, or emotion, acknowledge it explicitly before proceeding with information or recommendations."
+      },
+      "Bad or irrelevant recommendation": {
+        suggestion: "Match recommendations to customer's stated needs and constraints.",
+        rule: "Only recommend vehicles that match the customer's stated budget, preferences, and requirements. If no match exists, explain why and ask for flexibility."
+      }
+    };
+
+    // Step 1: Collect all subscores from all personas (including rating and explanation)
+    const allSubscores: Array<{ 
+      criterion: string; 
+      pointsDeducted: number; 
+      maxPoints: number;
+      rating?: number;
+      explanation?: string;
+      personaId?: string; // Track which persona this came from
+    }> = [];
+    
+    iteration.judgeResults.forEach(result => {
+      if (result.employee.subscores) {
+        result.employee.subscores.forEach(sub => {
+          const scoreEntry: {
+            criterion: string;
+            pointsDeducted: number;
+            maxPoints: number;
+            rating?: number;
+            explanation?: string;
+            personaId?: string;
+          } = {
+            criterion: sub.criterion,
+            pointsDeducted: sub.pointsDeducted,
+            maxPoints: sub.maxPoints,
+            personaId: result.personaId
+          };
+          
+          if (sub.rating !== undefined) {
+            scoreEntry.rating = sub.rating;
+          }
+          if (sub.explanation !== undefined) {
+            scoreEntry.explanation = sub.explanation;
+          }
+          
+          allSubscores.push(scoreEntry);
+        });
+      }
+    });
+
+    // Step 2: Group by criterion name (for calculations) and collect examples
+    const criterionGroups: Record<string, Array<{ pointsDeducted: number; maxPoints: number }>> = {};
+    const criterionExamples: Record<string, Array<{ rating: number; explanation: string; personaId: string }>> = {};
+    
+    allSubscores.forEach(sub => {
+      // Group for average calculation
+      if (!criterionGroups[sub.criterion]) {
+        criterionGroups[sub.criterion] = [];
+      }
+      const group = criterionGroups[sub.criterion];
+      if (group) {
+        group.push({
+          pointsDeducted: sub.pointsDeducted,
+          maxPoints: sub.maxPoints
+        });
+      }
+      
+      // Collect severe examples (rating 3-4) with explanations
+      if (sub.rating !== undefined && sub.rating >= 3 && sub.explanation) {
+        if (!criterionExamples[sub.criterion]) {
+          criterionExamples[sub.criterion] = [];
+        }
+        const examplesGroup = criterionExamples[sub.criterion];
+        if (examplesGroup) {
+          examplesGroup.push({
+            rating: sub.rating,
+            explanation: sub.explanation,
+            personaId: sub.personaId || "unknown"
+          });
+        }
+      }
+    });
+
+    // Step 3: Calculate average deduction for each criterion
+    const criterionAverages: Array<{
+      criterion: string;
+      avgDeduction: number;
+      maxPoints: number;
+      affectedPersonas: number;
+      totalPersonas: number;
+    }> = [];
+
+    Object.entries(criterionGroups).forEach(([criterion, deductions]) => {
+      if (deductions.length === 0) return;
+      
+      const totalDeduction = deductions.reduce((sum, d) => sum + d.pointsDeducted, 0);
+      const avgDeduction = totalDeduction / deductions.length;
+      const maxPoints = deductions[0]!.maxPoints; // All should have same maxPoints
+      const affectedPersonas = deductions.length;
+      const totalPersonas = iteration.judgeResults!.length;
+
+      criterionAverages.push({
+        criterion,
+        avgDeduction,
+        maxPoints,
+        affectedPersonas,
+        totalPersonas
+      });
+    });
+
+    // Step 4: Sort by highest average deduction (worst issues first)
+    criterionAverages.sort((a, b) => b.avgDeduction - a.avgDeduction);
+
+    // Step 5: Get top 5 worst issues (or all if less than 5)
+    const topIssues = criterionAverages.slice(0, Math.min(5, criterionAverages.length));
+
+    // Step 6: Format for Ax
+    if (topIssues.length > 0) {
+      feedback.push("\nTOP ISSUES REQUIRING FIXES:");
+      
+      topIssues.forEach((issue, index) => {
+        const suggestion = criterionSuggestions[issue.criterion];
+        const percentage = issue.maxPoints > 0 
+          ? ((issue.avgDeduction / issue.maxPoints) * 100).toFixed(1)
+          : "0";
+        
+        feedback.push(`\n${index + 1}. "${issue.criterion}" - Average deduction: ${issue.avgDeduction.toFixed(2)}/${issue.maxPoints} points (${percentage}% of max, affects ${issue.affectedPersonas}/${issue.totalPersonas} personas)`);
+        
+        if (suggestion) {
+          feedback.push(`   SUGGESTION: ${suggestion.suggestion}`);
+          feedback.push(`   Add rule: "${suggestion.rule}"`);
+        } else {
+          feedback.push(`   SUGGESTION: Address this criterion to improve overall performance.`);
+        }
+        
+        // Add severe examples (rating 3-4) for this criterion
+        const examples = criterionExamples[issue.criterion];
+        if (examples && examples.length > 0) {
+          // Sort by rating (highest first) and take top 2
+          const severeExamples = examples
+            .sort((a, b) => b.rating - a.rating)
+            .slice(0, 2);
+          
+          if (severeExamples.length > 0) {
+            feedback.push(`   \n   SEVERE EXAMPLES FROM JUDGE (rating 3-4):`);
+            severeExamples.forEach((example, exIndex) => {
+              feedback.push(`   ${exIndex + 1}. [Persona: ${example.personaId}, Rating: ${example.rating}/4] ${example.explanation}`);
+            });
+          }
+        }
+      });
+    }
+  }
   
   // CRITICAL ISSUES - Worst Performing Personas
   if (iteration.judgeResults && iteration.judgeResults.length > 0) {

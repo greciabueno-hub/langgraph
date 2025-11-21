@@ -59,7 +59,9 @@ Behavior:
 
 Goal:
 Talk like a normal human who wants a car and is texting with a dealership. 
-Keep messages short and real.
+Keep messages short and real.  Ask the questions this persona would realistically ask, always remember to be friendly and not sound too robotic.
+Keep the conversation going until your main questions and requirements have been answered.
+Only after your needs feel satisfied, naturally transition into being ready to book an appointment to see a car.
 
 `
       ),
